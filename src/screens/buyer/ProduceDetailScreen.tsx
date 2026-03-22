@@ -126,12 +126,12 @@ const ProduceDetailScreen = () => {
       <View style={styles.footer}>
           <TouchableOpacity 
             style={styles.chatBtn}
-            onPress={() => navigation.navigate('ChatScreen', { 
-                targetUserId: listing.farmerId, 
-                targetUserName: listing.farmerName || 'Farmer', 
-                targetUserRole: 'FARMER', 
-                contextTitle: listing.cropName 
-            })}
+            onPress={() => navigation.navigate('ChatScreen' as any, { 
+                partnerId: listing.farmerId, 
+                partnerName: listing.farmerName || 'Farmer', 
+                partnerRole: 'FARMER', 
+                cropName: listing.cropName 
+          })}
           >
               <Icon name="chatbubbles-outline" size={20} color={colors.common.white} />
               <Text style={styles.chatBtnText}>Contact Farmer</Text>

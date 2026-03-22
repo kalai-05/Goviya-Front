@@ -105,15 +105,22 @@ const BuyerRequestsScreen = () => {
         message: message.trim(),
       });
 
-      const buyerId = selectedRequest.buyerId;
-      const reqId = selectedRequest.id;
+      const partnerId = selectedRequest.buyerId;
+      const partnerName = selectedRequest.buyerName;
+      const partnerRole = 'BUYER';
+      const cropName = selectedRequest.cropName;
       
       setSelectedRequest(null);
       setOfferPrice('');
       setMessage('');
       
       Alert.alert('Success', 'Your offer has been sent!');
-      navigation.navigate('ChatScreen' as any, { buyerId, requestId: reqId });
+      navigation.navigate('ChatScreen' as any, { 
+        partnerId, 
+        partnerName, 
+        partnerRole,
+        cropName 
+      });
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to submit offer');
     } finally {

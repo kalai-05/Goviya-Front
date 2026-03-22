@@ -1,462 +1,444 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, TextInput, KeyboardAvoidingView, Platform, ActivityIndicator, Alert } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, useRoute } from '@react-navigation/native';
-import Icon from 'react-native-vector-icons/Ionicons';
+import {
+  View, Text, FlatList, TextInput, TouchableOpacity,
+  StyleSheet, KeyboardAvoidingView, Platform, Alert,
+  ActivityIndicator, SafeAreaView
+} from 'react-native';
 import { useAuthStore } from '../../store/authStore';
-import { db, Collections } from '../../services/firebase';
-import { colors } from '../../constants/colors';
-
-interface DealData {
-  crop: string;
-  quantity: string;
-  price: number;
-  total: number;
-  status: 'PROPOSED' | 'ACCEPTED' | 'REJECTED';
-}
+import { wsService } from '../../services/websocketService';
+import api from '../../services/api';
+import { paymentService } from '../../services/paymentService';
 
 interface Message {
   id: string;
-  chatId: string;
   senderId: string;
-  text: string;
-  createdAt: string;
-  isDeal?: boolean;
-  dealData?: DealData;
+  senderName: string;
+  senderRole: string;
+  receiverId: string;
+  message: string;
+  type: string;
+  dealDetails?: {
+    cropName: string;
+    quantityKg: number;
+    pricePerKg: number;
+    totalPrice: number;
+  };
+  orderId?: string;
+  isRead: boolean;
+  sentAt: string;
 }
 
-const getRoleEmoji = (role: string) => {
-  if (role === 'FARMER') return '🧑‍🌾';
-  if (role === 'BUYER') return '🛒';
-  if (role === 'SHOP') return '🏪';
-  return '👤';
-};
+interface ChatScreenProps {
+  route: {
+    params: {
+      partnerId: string;
+      partnerName: string;
+      partnerRole: string;
+      cropName?: string;
+    };
+  };
+}
 
-const getRoleColor = (role: string | null) => {
-  if (role === 'FARMER') return colors.farmer.primary;
-  if (role === 'BUYER') return colors.buyer.primary;
-  if (role === 'SHOP') return colors.agriShop.primary;
-  return colors.common.textSecondary; 
-};
-
-const ChatScreen = () => {
-  const navigation = useNavigation();
-  const route = useRoute<any>();
-  const user = useAuthStore(state => state.user);
-  
-  // Destructuring navigational parameters routed securely from arrays
-  const { 
-    targetUserId = 'user_2', 
-    targetUserName = 'Trading Partner', 
-    targetUserRole = 'FARMER', 
-    contextTitle = 'General Inquiry' 
-  } = route.params || {};
-
+export default function ChatScreen({ route }: ChatScreenProps) {
+  const { partnerId, partnerName, partnerRole, cropName } = route.params;
+  const { user } = useAuthStore();
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(true);
-  
+  const [wsConnected, setWsConnected] = useState(false);
+  const [showDealForm, setShowDealForm] = useState(false);
+  const [dealPrice, setDealPrice] = useState('');
+  const [dealQty, setDealQty] = useState('');
   const flatListRef = useRef<FlatList>(null);
-  
-  // Unique Thread ID mathematically derived predictably 
-  const chatId = [user?.id || 'me', targetUserId].sort().join('_');
-  const myColor = getRoleColor(user?.role || null);
+
+  const myColor = user?.role === 'FARMER' ? '#1a7a4a' : '#1a5fa8';
 
   useEffect(() => {
-    if (!user?.id) return;
+    loadHistory();
+    connectWebSocket();
+    return () => {
+      wsService.removeHandler('chatScreen');
+    };
+  }, []);
 
-    const unsubscribe = db.collection(Collections.chat_messages)
-      .where('chatId', '==', chatId)
-      .orderBy('createdAt', 'asc')
-      .onSnapshot(
-        (snapshot) => {
-          const fetchedMessages: Message[] = [];
-          snapshot.forEach(doc => {
-            fetchedMessages.push({ id: doc.id, ...doc.data() } as Message);
-          });
-
-          // Mock Data Injection ensuring display rendering behaves gracefully
-          if (fetchedMessages.length === 0 && loading) {
-            fetchedMessages.push(
-              { id: 'm1', chatId, senderId: targetUserId, text: `Hello! I saw your post regarding ${contextTitle}.`, createdAt: new Date(Date.now() - 600000).toISOString() },
-              { id: 'm2', chatId, senderId: user.id, text: "Yes, how much do you need?", createdAt: new Date(Date.now() - 300000).toISOString() },
-              { id: 'm3', chatId, senderId: targetUserId, text: "I need 500kg. Can you do Rs. 150/kg?", createdAt: new Date(Date.now() - 150000).toISOString() }
-            );
-
-            // Mocking an initial Deal proposal if target is Farmer
-            if (targetUserRole === 'FARMER') {
-              fetchedMessages.push({
-                id: 'm4',
-                chatId,
-                senderId: targetUserId,
-                text: "Here is my final offer.",
-                createdAt: new Date(Date.now() - 60000).toISOString(),
-                isDeal: true,
-                dealData: { crop: contextTitle, quantity: '500 kg', price: 155, total: 77500, status: 'PROPOSED' }
-              });
-            }
-          }
-
-          setMessages(fetchedMessages);
-          setLoading(false);
-          
-          // Force layout jump directly mapping to bottom payload
-          setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
-        },
-        (error) => {
-          console.error("Chat sync error:", error);
-          setLoading(false);
-        }
-      );
-
-    return () => unsubscribe();
-  }, [user, chatId]);
-
-  const handleSend = async () => {
-    if (!inputText.trim() || !user?.id) return;
-
-    const textToSend = inputText.trim();
-    setInputText(''); 
-
+  const loadHistory = async () => {
     try {
-      await db.collection(Collections.chat_messages).add({
-        chatId: chatId,
-        senderId: user.id,
-        text: textToSend,
-        createdAt: new Date().toISOString()
-      });
-      // Fire-and-forget; onSnapshot dynamically sweeps the render array!
+      const response = await api.get('/chat/history/' + partnerId);
+      setMessages(response.data.data);
+      wsService.markAsRead(partnerId);
     } catch (err) {
-      console.error('Message failed to transmit', err);
-      Alert.alert('Send Error', 'Could not deliver the message directly. Check your network.');
+      console.error('History load error:', err);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleAcceptPayHere = (msgId: string, total: number) => {
-    // Implementing PayHere mock routing simulating checkout behavior 
+  const connectWebSocket = async () => {
+    try {
+      if (!wsService.isConnected()) {
+        await wsService.connect();
+      }
+      setWsConnected(true);
+
+      wsService.onMessage('chatScreen', (msg: any) => {
+        const isRelevant =
+          (msg.senderId === partnerId && msg.receiverId === user?.id) ||
+          (msg.senderId === user?.id && msg.receiverId === partnerId);
+
+        if (!isRelevant) return;
+
+        if (msg.type === 'READ_RECEIPT') {
+          setMessages(prev =>
+            prev.map(m =>
+              m.senderId === user?.id ? { ...m, isRead: true } : m
+            )
+          );
+          return;
+        }
+
+        setMessages(prev => {
+          const exists = prev.find(m => m.id === msg.id);
+          if (exists) return prev;
+          return [...prev, msg];
+        });
+
+        setTimeout(() => {
+          flatListRef.current?.scrollToEnd({ animated: true });
+        }, 100);
+
+        if (msg.senderId === partnerId) {
+          wsService.markAsRead(partnerId);
+        }
+      });
+    } catch (err) {
+      console.error('WebSocket connect error:', err);
+      setWsConnected(false);
+    }
+  };
+
+  const handleSend = () => {
+    if (!inputText.trim() || !wsConnected) return;
+    wsService.sendMessage(partnerId, inputText.trim());
+    setInputText('');
+  };
+
+  const handleProposeDeal = () => {
+    const price = parseFloat(dealPrice);
+    const qty = parseFloat(dealQty);
+    if (!price || !qty) {
+      Alert.alert('Error', 'Enter valid price and quantity');
+      return;
+    }
+    wsService.proposeDeal(partnerId, {
+      cropName: cropName || 'Produce',
+      quantityKg: qty,
+      pricePerKg: price,
+      totalPrice: price * qty,
+      pickupDistrict: user?.district || '',
+    });
+    setShowDealForm(false);
+    setDealPrice('');
+    setDealQty('');
+  };
+
+  const handleAcceptDeal = (messageId: string) => {
     Alert.alert(
-      'Initialize PayHere Gateway',
-      `You are about to securely transfer Rs. ${total.toLocaleString()} to ${targetUserName}.\n\nProceed to checkout?`,
+      'Accept Deal?',
+      'Confirm this deal and proceed to payment.',
       [
         { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Accept & Pay', 
+        {
+          text: 'Accept & Pay',
+          style: 'default',
           onPress: async () => {
-            try {
-               await db.collection(Collections.chat_messages).doc(msgId).update({
-                 'dealData.status': 'ACCEPTED'
-               });
-               Alert.alert('Payment Successful!', 'Funds placed in escrow securely until fulfillment.');
-            } catch (e) {
-               console.log('Failing to accept local mock state natively', e);
-            }
-          } 
+            wsService.acceptDeal(messageId, partnerId);
+          }
         }
       ]
     );
   };
 
+  const handleRejectDeal = (messageId: string) => {
+    Alert.alert('Reject Deal?', 'This will reject the offer.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Reject', style: 'destructive',
+          onPress: () => wsService.rejectDeal(messageId) }
+      ]
+    );
+  };
+
+  const handlePayment = async (orderId: string) => {
+    try {
+      await paymentService.initiatePayment(orderId);
+      // Notify via WebSocket
+      wsService.notifyPaymentDone(orderId, partnerId);
+    } catch (err: any) {
+      Alert.alert('Payment Failed', err.message);
+    }
+  };
+
   const renderMessage = ({ item }: { item: Message }) => {
     const isMe = item.senderId === user?.id;
-    const timeStr = new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    if (item.type === 'DEAL_PROPOSE') {
+      const deal = item.dealDetails;
+      const isFromPartner = !isMe;
+
+      return (
+        <View style={[
+          styles.dealCard,
+          isMe ? styles.dealCardMe : styles.dealCardThem
+        ]}>
+          <Text style={styles.dealEmoji}>🤝</Text>
+          <Text style={styles.dealTitle}>Deal Proposed</Text>
+          {deal && (
+            <>
+              <Text style={styles.dealRow}>🌾 {deal.cropName}</Text>
+              <Text style={styles.dealRow}>📦 {deal.quantityKg} kg</Text>
+              <Text style={styles.dealRow}>💰 LKR {deal.pricePerKg}/kg</Text>
+              <Text style={styles.dealTotal}>Total: LKR {deal.totalPrice.toLocaleString()}</Text>
+            </>
+          )}
+          <Text style={styles.dealTime}>{formatTime(item.sentAt)}</Text>
+          {isFromPartner && (
+            <View style={styles.dealActions}>
+              <TouchableOpacity style={styles.acceptBtn} onPress={() => handleAcceptDeal(item.id)}>
+                <Text style={styles.acceptBtnText}>✓ Accept & Pay</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.rejectBtn} onPress={() => handleRejectDeal(item.id)}>
+                <Text style={styles.rejectBtnText}>✗ Reject</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      );
+    }
+
+    if (item.type === 'DEAL_ACCEPT') {
+      return (
+        <View style={styles.statusCard}>
+          <Text style={styles.statusIcon}>✅</Text>
+          <Text style={styles.statusText}>{item.message}</Text>
+          {item.orderId && !isMe && (
+            <TouchableOpacity style={styles.payBtn} onPress={() => handlePayment(item.orderId!)}>
+              <Text style={styles.payBtnText}>💳 Pay Now</Text>
+            </TouchableOpacity>
+          )}
+          <Text style={styles.statusTime}>{formatTime(item.sentAt)}</Text>
+        </View>
+      );
+    }
+
+    if (item.type === 'DEAL_REJECT') {
+      return (
+        <View style={[styles.statusCard, styles.rejectCard]}>
+          <Text style={styles.statusIcon}>❌</Text>
+          <Text style={styles.statusText}>{item.message}</Text>
+          <Text style={styles.statusTime}>{formatTime(item.sentAt)}</Text>
+        </View>
+      );
+    }
+
+    if (item.type === 'PAYMENT_DONE') {
+      return (
+        <View style={[styles.statusCard, styles.payCard]}>
+          <Text style={styles.statusIcon}>💳</Text>
+          <Text style={styles.statusText}>{item.message}</Text>
+          <Text style={styles.statusTime}>{formatTime(item.sentAt)}</Text>
+        </View>
+      );
+    }
+
+    if (item.type === 'ORDER_UPDATE') {
+      return (
+        <View style={[styles.statusCard, styles.orderCard]}>
+          <Text style={styles.statusIcon}>📦</Text>
+          <Text style={styles.statusText}>{item.message}</Text>
+          <Text style={styles.statusTime}>{formatTime(item.sentAt)}</Text>
+        </View>
+      );
+    }
 
     return (
-      <View style={[styles.messageWrapper, isMe ? styles.messageWrapperMe : styles.messageWrapperThem]}>
-        
-        {item.isDeal && item.dealData ? (
-          // Deal Card Execution
-          <View style={[styles.dealCard, { borderColor: isMe ? myColor : colors.common.border }]}>
-            <View style={styles.dealHeader}>
-              <Icon name="hand-left" size={18} color={isMe ? myColor : colors.common.textPrimary} />
-              <Text style={styles.dealTitle}>Deal Proposed</Text>
-            </View>
-            <Text style={styles.dealDesc}>{item.dealData.crop} • {item.dealData.quantity}</Text>
-            <Text style={styles.dealDesc}>Rate: Rs. {item.dealData.price} /kg</Text>
-            <View style={styles.dealDivider} />
-            <Text style={styles.dealTotal}>Total: Rs. {item.dealData.total.toLocaleString()}</Text>
-            
-            {!isMe && user?.role === 'BUYER' && item.dealData.status === 'PROPOSED' && (
-              <TouchableOpacity 
-                style={styles.payHereBtn} 
-                onPress={() => handleAcceptPayHere(item.id, item.dealData!.total)}
-              >
-                <Icon name="card-outline" size={18} color="#fff" />
-                <Text style={styles.payHereBtnText}>Accept & Pay</Text>
-              </TouchableOpacity>
+      <View style={[styles.msgRow, isMe ? styles.msgRowMe : styles.msgRowThem]}>
+        <View style={[styles.bubble, isMe ? [styles.bubbleMe, { backgroundColor: myColor }] : styles.bubbleThem]}>
+          <Text style={[styles.msgText, isMe ? styles.msgTextMe : styles.msgTextThem]}>{item.message}</Text>
+          <View style={styles.msgMeta}>
+            <Text style={[styles.msgTime, isMe ? styles.msgTimeMe : styles.msgTimeThem]}>{formatTime(item.sentAt)}</Text>
+            {isMe && (
+              <Text style={[styles.readReceipt, { color: item.isRead ? '#4fc3f7' : 'rgba(255,255,255,0.5)' }]}>
+                {item.isRead ? '✓✓' : '✓'}
+              </Text>
             )}
-
-            {item.dealData.status === 'ACCEPTED' && (
-              <View style={styles.acceptedBadge}>
-                <Icon name="checkmark-circle" size={16} color="#4caf50" />
-                <Text style={styles.acceptedText}>Deal Accepted</Text>
-              </View>
-            )}
-            
-            <Text style={[styles.messageTime, { alignSelf: 'flex-end', marginTop: 8 }]}>{timeStr}</Text>
           </View>
-        ) : (
-          // Generic Text Message Execution
-          <View style={[styles.bubble, isMe ? { backgroundColor: myColor } : styles.bubbleThem]}>
-            <Text style={[styles.messageText, isMe ? styles.messageTextMe : styles.messageTextThem]}>
-              {item.text}
-            </Text>
-            <Text style={[styles.messageTime, isMe ? styles.messageTimeMe : styles.messageTimeThem]}>
-              {timeStr}
-            </Text>
-          </View>
-        )}
+        </View>
       </View>
     );
   };
 
+  const formatTime = (dateStr: string) => {
+    const d = new Date(dateStr);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={myColor} />
+      </View>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
-      
-      {/* Header scaling directly to Authenticated User's Profile Scheme */}
       <View style={[styles.header, { backgroundColor: myColor }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Icon name="arrow-back" size={24} color={colors.common.white} />
-        </TouchableOpacity>
-        
-        <View style={styles.headerInfo}>
-          <Text style={styles.headerName}>
-            {getRoleEmoji(targetUserRole)} {targetUserName}
-          </Text>
-          <Text style={styles.headerSubtitle}>
-            Regarding: {contextTitle}
+        <View style={styles.headerAvatar}>
+          <Text style={styles.headerAvatarText}>{partnerRole === 'FARMER' ? '🧑🌾' : '🛒'}</Text>
+        </View>
+        <View>
+          <Text style={styles.headerName}>{partnerName}</Text>
+          <Text style={styles.headerSub}>
+            {cropName ? '🌾 ' + cropName : partnerRole}
+            {' · '}
+            <Text style={{ color: wsConnected ? '#a5f3a5' : '#ffaaaa' }}>
+              {wsConnected ? '● Live' : '○ Offline'}
+            </Text>
           </Text>
         </View>
-        <View style={{ width: 30 }} />
       </View>
 
-      <KeyboardAvoidingView 
-        style={styles.keyboardView} 
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        {loading ? (
-          <View style={styles.loaderContainer}>
-            <ActivityIndicator size="large" color={myColor} />
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <FlatList
+          ref={flatListRef}
+          data={messages}
+          renderItem={renderMessage}
+          keyExtractor={item => item.id || Math.random().toString()}
+          contentContainerStyle={styles.messagesList}
+          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: false })}
+        />
+
+        {showDealForm && (
+          <View style={styles.dealForm}>
+            <Text style={styles.dealFormTitle}>Propose a Deal</Text>
+            <View style={styles.dealFormRow}>
+              <TextInput
+                style={styles.dealInput}
+                placeholder="Price (LKR/kg)"
+                keyboardType="numeric"
+                value={dealPrice}
+                onChangeText={setDealPrice}
+              />
+              <TextInput
+                style={styles.dealInput}
+                placeholder="Quantity (kg)"
+                keyboardType="numeric"
+                value={dealQty}
+                onChangeText={setDealQty}
+              />
+            </View>
+            {dealPrice && dealQty && (
+              <Text style={styles.dealCalc}>Total: LKR {(parseFloat(dealPrice) * parseFloat(dealQty)).toLocaleString()}</Text>
+            )}
+            <View style={styles.dealFormBtns}>
+              <TouchableOpacity onPress={() => setShowDealForm(false)} style={styles.cancelDealBtn}>
+                <Text style={styles.cancelDealText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleProposeDeal} style={[styles.sendDealBtn, { backgroundColor: myColor }]}>
+                <Text style={styles.sendDealText}>Send Deal</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        ) : (
-          <FlatList
-            ref={flatListRef}
-            data={messages}
-            keyExtractor={item => item.id}
-            renderItem={renderMessage}
-            contentContainerStyle={styles.listContent}
-            showsVerticalScrollIndicator={false}
-            onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-            onLayout={() => flatListRef.current?.scrollToEnd({ animated: true })}
-          />
         )}
 
-        <View style={styles.inputContainer}>
+        <View style={styles.inputBar}>
+          {user?.role === 'FARMER' && (
+            <TouchableOpacity onPress={() => setShowDealForm(!showDealForm)} style={[styles.dealBtn, { backgroundColor: myColor + '22' }]}>
+              <Text style={[styles.dealBtnText, { color: myColor }]}>🤝</Text>
+            </TouchableOpacity>
+          )}
           <TextInput
             style={styles.textInput}
-            value={inputText}
-            onChangeText={setInputText}
             placeholder="Type a message..."
             placeholderTextColor="#aaa"
+            value={inputText}
+            onChangeText={setInputText}
             multiline
+            maxLength={500}
           />
-          <TouchableOpacity 
-            style={[styles.sendButton, { backgroundColor: inputText.trim() ? myColor : colors.common.border }]} 
+          <TouchableOpacity
             onPress={handleSend}
-            disabled={!inputText.trim()}
-          >
-            <Icon name="send" size={18} color={colors.common.white} />
+            disabled={!inputText.trim() || !wsConnected}
+            style={[styles.sendBtn, { backgroundColor: myColor }, (!inputText.trim() || !wsConnected) && styles.sendBtnDisabled]}>
+            <Text style={styles.sendBtnText}>➤</Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
-
     </SafeAreaView>
   );
-};
+}
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f7fa',
-  },
-  keyboardView: {
-    flex: 1,
-  },
-  loaderContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    paddingTop: Platform.OS === 'android' ? 20 : 16, // SafeArea padding fallback
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-  backBtn: {
-    padding: 4,
-  },
-  headerInfo: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  headerName: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: colors.common.white,
-  },
-  headerSubtitle: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.8)',
-    marginTop: 2,
-    fontStyle: 'italic',
-  },
-  listContent: {
-    padding: 16,
-    paddingBottom: 20,
-  },
-  messageWrapper: {
-    marginVertical: 4,
-    maxWidth: '85%',
-  },
-  messageWrapperMe: {
-    alignSelf: 'flex-end',
-  },
-  messageWrapperThem: {
-    alignSelf: 'flex-start',
-  },
-  bubble: {
-    padding: 12,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-  },
-  bubbleThem: {
-    backgroundColor: '#e4e6eb',
-    borderBottomLeftRadius: 4,
-  },
-  messageText: {
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  messageTextMe: {
-    color: colors.common.white,
-  },
-  messageTextThem: {
-    color: colors.common.textPrimary,
-  },
-  messageTime: {
-    fontSize: 10,
-    marginTop: 4,
-    alignSelf: 'flex-end',
-  },
-  messageTimeMe: {
-    color: 'rgba(255,255,255,0.7)',
-  },
-  messageTimeThem: {
-    color: colors.common.textSecondary,
-  },
-  dealCard: {
-    backgroundColor: colors.common.white,
-    padding: 16,
-    borderRadius: 16,
-    borderWidth: 1.5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-    width: 250,
-  },
-  dealHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  dealTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: colors.common.textPrimary,
-    marginLeft: 6,
-  },
-  dealDesc: {
-    fontSize: 14,
-    color: colors.common.textSecondary,
-    marginBottom: 4,
-  },
-  dealDivider: {
-    height: 1,
-    backgroundColor: colors.common.border,
-    marginVertical: 12,
-  },
-  dealTotal: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: colors.common.textPrimary,
-    marginBottom: 12,
-  },
-  payHereBtn: {
-    backgroundColor: '#004c99', // Core generic PayHere Blue shade mapped logically
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-    borderRadius: 8,
-    marginTop: 4,
-  },
-  payHereBtnText: {
-    color: colors.common.white,
-    fontWeight: 'bold',
-    fontSize: 14,
-    marginLeft: 6,
-  },
-  acceptedBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#e8f5e9',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    alignSelf: 'flex-start',
-  },
-  acceptedText: {
-    color: '#4caf50',
-    fontWeight: 'bold',
-    fontSize: 13,
-    marginLeft: 6,
-  },
-  inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
-    paddingHorizontal: 16,
-    backgroundColor: colors.common.white,
-    borderTopWidth: 1,
-    borderTopColor: colors.common.border,
-    paddingBottom: Platform.OS === 'ios' ? 24 : 12,
-  },
-  textInput: {
-    flex: 1,
-    backgroundColor: '#f5f7fa',
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 12,
-    maxHeight: 100,
-    fontSize: 15,
-    color: colors.common.textPrimary,
-  },
-  sendButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginLeft: 12,
-  },
+  container: { flex: 1, backgroundColor: '#f8faf8' },
+  flex: { flex: 1 },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14, paddingTop: 10 },
+  headerAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.25)', alignItems: 'center', justifyContent: 'center' },
+  headerAvatarText: { fontSize: 18 },
+  headerName: { fontSize: 14, fontWeight: '500', color: '#fff' },
+  headerSub: { fontSize: 11, color: 'rgba(255,255,255,0.8)' },
+  messagesList: { padding: 12, paddingBottom: 8 },
+  msgRow: { marginBottom: 4, flexDirection: 'row' },
+  msgRowMe: { justifyContent: 'flex-end' },
+  msgRowThem: { justifyContent: 'flex-start' },
+  bubble: { maxWidth: '75%', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 },
+  bubbleMe: { borderBottomRightRadius: 4 },
+  bubbleThem: { backgroundColor: '#fff', borderBottomLeftRadius: 4, borderWidth: 1, borderColor: 'rgba(0,0,0,0.08)' },
+  msgText: { fontSize: 14, lineHeight: 20 },
+  msgTextMe: { color: '#fff' },
+  msgTextThem: { color: '#1a1a1a' },
+  msgMeta: { flexDirection: 'row', gap: 4, alignItems: 'center', marginTop: 3, justifyContent: 'flex-end' },
+  msgTime: { fontSize: 10 },
+  msgTimeMe: { color: 'rgba(255,255,255,0.7)' },
+  msgTimeThem: { color: '#bbb' },
+  readReceipt: { fontSize: 11, fontWeight: '600' },
+  dealCard: { margin: 8, borderRadius: 16, padding: 14, borderWidth: 1 },
+  dealCardMe: { backgroundColor: '#e8f5ee', borderColor: '#1a7a4a', alignSelf: 'flex-end', maxWidth: '80%' },
+  dealCardThem: { backgroundColor: '#fff', borderColor: '#e0e0e0', alignSelf: 'flex-start', maxWidth: '80%' },
+  dealEmoji: { fontSize: 24, textAlign: 'center', marginBottom: 6 },
+  dealTitle: { fontSize: 13, fontWeight: '600', color: '#1a1a1a', textAlign: 'center', marginBottom: 8 },
+  dealRow: { fontSize: 12, color: '#444', marginBottom: 3 },
+  dealTotal: { fontSize: 14, fontWeight: '700', color: '#1a7a4a', marginTop: 6 },
+  dealTime: { fontSize: 10, color: '#bbb', marginTop: 6 },
+  dealActions: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  acceptBtn: { flex: 1, backgroundColor: '#1a7a4a', borderRadius: 10, padding: 9, alignItems: 'center' },
+  acceptBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  rejectBtn: { flex: 1, backgroundColor: '#fff', borderRadius: 10, padding: 9, alignItems: 'center', borderWidth: 1, borderColor: '#e24b4a' },
+  rejectBtnText: { color: '#e24b4a', fontSize: 12, fontWeight: '600' },
+  statusCard: { margin: 8, borderRadius: 14, padding: 12, backgroundColor: '#e8f5ee', borderWidth: 1, borderColor: '#1a7a4a', alignItems: 'center' },
+  rejectCard: { backgroundColor: '#fcebeb', borderColor: '#e24b4a' },
+  payCard: { backgroundColor: '#e6f1fb', borderColor: '#1a5fa8' },
+  orderCard: { backgroundColor: '#faeeda', borderColor: '#7a4f00' },
+  statusIcon: { fontSize: 24, marginBottom: 6 },
+  statusText: { fontSize: 12, color: '#1a1a1a', textAlign: 'center', lineHeight: 18 },
+  statusTime: { fontSize: 10, color: '#bbb', marginTop: 6 },
+  payBtn: { marginTop: 10, backgroundColor: '#1a5fa8', borderRadius: 10, paddingHorizontal: 20, paddingVertical: 9 },
+  payBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  dealForm: { backgroundColor: '#fff', padding: 14, borderTopWidth: 1, borderTopColor: '#eee' },
+  dealFormTitle: { fontSize: 13, fontWeight: '600', color: '#1a1a1a', marginBottom: 10 },
+  dealFormRow: { flexDirection: 'row', gap: 8 },
+  dealInput: { flex: 1, backgroundColor: '#f5f5f5', borderRadius: 10, padding: 10, fontSize: 13 },
+  dealCalc: { fontSize: 13, fontWeight: '600', color: '#1a7a4a', marginTop: 8 },
+  dealFormBtns: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  cancelDealBtn: { flex: 1, backgroundColor: '#f5f5f5', borderRadius: 10, padding: 10, alignItems: 'center' },
+  cancelDealText: { fontSize: 13, color: '#666' },
+  sendDealBtn: { flex: 1, borderRadius: 10, padding: 10, alignItems: 'center' },
+  sendDealText: { fontSize: 13, color: '#fff', fontWeight: '600' },
+  inputBar: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, padding: 10, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#eee' },
+  dealBtn: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  dealBtnText: { fontSize: 18 },
+  textInput: { flex: 1, backgroundColor: '#f5f5f5', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, maxHeight: 100, color: '#1a1a1a' },
+  sendBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  sendBtnDisabled: { opacity: 0.4 },
+  sendBtnText: { color: '#fff', fontSize: 16 },
 });
-
-export default ChatScreen;

@@ -10,6 +10,7 @@ import MyListingsScreen from '../screens/farmer/MyListingsScreen';
 import CreateListingScreen from '../screens/farmer/CreateListingScreen';
 import ProfileScreen from '../screens/common/ProfileScreen';
 import ChatScreen from '../screens/shared/ChatScreen';
+import ChatListScreen from '../screens/shared/ChatListScreen';
 import OffersScreen from '../screens/farmer/OffersScreen';
 import { colors } from '../constants/colors';
 
@@ -22,6 +23,7 @@ const HomeStack = () => (
     <Stack.Screen name="MyListings" component={MyListingsScreen} />
     <Stack.Screen name="CreateListingScreen" component={CreateListingScreen} />
     <Stack.Screen name="ChatScreen" component={ChatScreen} />
+    <Stack.Screen name="ChatListScreen" component={ChatListScreen} />
     <Stack.Screen name="OffersScreen" component={OffersScreen} />
   </Stack.Navigator>
 );

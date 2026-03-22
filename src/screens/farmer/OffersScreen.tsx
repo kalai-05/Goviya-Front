@@ -88,11 +88,11 @@ const OffersScreen = () => {
   };
 
   const handleChat = (offer: Offer) => {
-    navigation.navigate('ChatScreen', {
-      targetUserId: offer.buyerId,
-      targetUserName: offer.buyerName,
-      targetUserRole: 'BUYER',
-      contextTitle: offer.cropName,
+    navigation.navigate('ChatScreen' as any, {
+      partnerId: offer.buyerId,
+      partnerName: offer.buyerName,
+      partnerRole: 'BUYER',
+      cropName: offer.cropName,
     });
   };
 

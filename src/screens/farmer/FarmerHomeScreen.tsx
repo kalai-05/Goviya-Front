@@ -8,6 +8,7 @@ import { useAuthStore } from '../../store/authStore';
 import { colors } from '../../constants/colors';
 import { weatherService } from '../../services/weatherService';
 import { requestService } from '../../services/requestService';
+import api from '../../services/api';
 
 type FarmerStackParamList = {
   Prices: undefined;
@@ -22,6 +23,7 @@ type NavigationProp = NativeStackNavigationProp<FarmerStackParamList>;
 interface BuyerRequest {
   id: string;
   buyerId: string;
+  buyerName: string;
   crop: string;
   quantity: string;
   maxPrice: number;
@@ -35,6 +37,7 @@ const FarmerHomeScreen = () => {
   
   const [weather, setWeather] = useState<{temp: number; condition: string; rainWarning: boolean} | null>(null);
   const [buyerRequests, setBuyerRequests] = useState<BuyerRequest[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingInitial, setLoadingInitial] = useState(true);
 
@@ -70,6 +73,7 @@ const FarmerHomeScreen = () => {
         const mapped = response.data.slice(0, 3).map((item: any) => ({
           id: item.id,
           buyerId: item.buyerId,
+          buyerName: item.buyerName || 'Buyer',
           crop: item.cropName,
           quantity: `${item.quantityKg} kg`,
           maxPrice: item.maxPricePerKg,
@@ -82,9 +86,20 @@ const FarmerHomeScreen = () => {
     }
   };
 
+  const fetchUnreadCount = async () => {
+    try {
+      const response = await api.get('/chat/unread-count');
+      if (response.data.success) {
+        setUnreadCount(response.data.data);
+      }
+    } catch (error) {
+      console.log('Error fetching unread count:', error);
+    }
+  };
+
   const loadData = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([fetchWeather(), fetchBuyerRequests()]);
+    await Promise.all([fetchWeather(), fetchBuyerRequests(), fetchUnreadCount()]);
     setRefreshing(false);
     setLoadingInitial(false);
   }, [user]);
@@ -110,10 +125,23 @@ const FarmerHomeScreen = () => {
   const renderHeader = () => (
     <View>
       <View style={styles.header}>
-        <Text style={styles.greeting}>{getGreeting()}, {user?.name?.split(' ')[0] || 'Farmer'}</Text>
-        <Text style={styles.location}>
-          <Icon name="location-sharp" size={16} color={colors.common.textSecondary} /> {user?.district || 'Sri Lanka'}
-        </Text>
+        <View>
+          <Text style={styles.greeting}>{getGreeting()}, {user?.name?.split(' ')[0] || 'Farmer'}</Text>
+          <Text style={styles.location}>
+            <Icon name="location-sharp" size={16} color={colors.common.textSecondary} /> {user?.district || 'Sri Lanka'}
+          </Text>
+        </View>
+        <TouchableOpacity 
+          style={styles.notifIconContainer} 
+          onPress={() => navigation.navigate('ChatListScreen' as any)}
+        >
+          <Icon name="chatbubbles-outline" size={28} color={colors.farmer.primary} />
+          {unreadCount > 0 && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
       </View>
 
       <View style={styles.weatherCard}>
@@ -160,7 +188,12 @@ const FarmerHomeScreen = () => {
       </View>
       <TouchableOpacity 
         style={styles.respondButton} 
-        onPress={() => navigation.navigate('ChatScreen' as any, { buyerId: item.buyerId, requestId: item.id })}
+        onPress={() => navigation.navigate('ChatScreen' as any, { 
+          partnerId: item.buyerId, 
+          partnerName: item.buyerName, 
+          partnerRole: 'BUYER',
+          cropName: item.crop 
+        })}
       >
         <Text style={styles.respondButtonText}>Respond</Text>
       </TouchableOpacity>
@@ -206,7 +239,38 @@ const styles = StyleSheet.create({
     paddingTop: 10,
   },
   header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 20,
+  },
+  notifIconContainer: {
+    padding: 8,
+    backgroundColor: colors.common.white,
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  badge: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    backgroundColor: '#e24b4a',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: colors.common.white,
+  },
+  badgeText: {
+    color: colors.common.white,
+    fontSize: 10,
+    fontWeight: 'bold',
   },
   greeting: {
     fontSize: 24,

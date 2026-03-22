@@ -9,6 +9,7 @@ import MyOrdersScreen from '../screens/buyer/MyOrdersScreen';
 import AgriShopsScreen from '../screens/buyer/AgriShopsScreen';
 import ProfileScreen from '../screens/common/ProfileScreen';
 import ChatScreen from '../screens/shared/ChatScreen';
+import ChatListScreen from '../screens/shared/ChatListScreen';
 import ProduceDetailScreen from '../screens/buyer/ProduceDetailScreen';
 import ShopPublicProfileScreen from '../screens/buyer/ShopPublicProfileScreen';
 import { colors } from '../constants/colors';
@@ -21,6 +22,7 @@ const BuyerHomeStack = () => (
     <Stack.Screen name="BuyerHome" component={BuyerHomeScreen} />
     <Stack.Screen name="ProduceDetailScreen" component={ProduceDetailScreen} />
     <Stack.Screen name="ChatScreen" component={ChatScreen} />
+    <Stack.Screen name="ChatListScreen" component={ChatListScreen} />
   </Stack.Navigator>
 );
 

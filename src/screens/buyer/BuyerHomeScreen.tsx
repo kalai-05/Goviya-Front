@@ -6,6 +6,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useAuthStore } from '../../store/authStore';
 import { listingService } from '../../services/listingService';
+import api from '../../services/api';
 import { colors } from '../../constants/colors';
 
 const FILTERS = ['All', 'Veg', 'Fruit', 'Near me'];
@@ -43,6 +44,7 @@ const BuyerHomeScreen = () => {
 
   const [listings, setListings] = useState<ProduceListing[]>([]);
   const [selectedFilter, setSelectedFilter] = useState('All');
+  const [unreadCount, setUnreadCount] = useState(0);
   
   const [refreshing, setRefreshing] = useState(false);
   const [loadingInitial, setLoadingInitial] = useState(true);
@@ -84,9 +86,20 @@ const BuyerHomeScreen = () => {
     }
   };
 
+  const fetchUnreadCount = async () => {
+    try {
+      const response = await api.get('/chat/unread-count');
+      if (response.data.success) {
+        setUnreadCount(response.data.data);
+      }
+    } catch (error) {
+      console.log('Error fetching unread count:', error);
+    }
+  };
+
   const loadInitialData = useCallback(async () => {
     setRefreshing(true);
-    await fetchListings();
+    await Promise.all([fetchListings(), fetchUnreadCount()]);
     setRefreshing(false);
     setLoadingInitial(false);
   }, [user, selectedFilter]);
@@ -114,8 +127,23 @@ const BuyerHomeScreen = () => {
   const renderHeader = () => (
     <View style={styles.headerContainer}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Find Fresh Produce</Text>
-        <Text style={styles.headerSubtitle}>Direct from farmers to you</Text>
+        <View style={styles.headerTitleRow}>
+          <View>
+            <Text style={styles.headerTitle}>Find Fresh Produce</Text>
+            <Text style={styles.headerSubtitle}>Direct from farmers to you</Text>
+          </View>
+          <TouchableOpacity 
+            style={styles.notifIconContainer} 
+            onPress={() => navigation.navigate('ChatListScreen' as any)}
+          >
+            <Icon name="chatbubbles-outline" size={26} color={colors.common.white} />
+            {unreadCount > 0 && (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={styles.filterContainer}>
@@ -187,7 +215,12 @@ const BuyerHomeScreen = () => {
         </TouchableOpacity>
         <TouchableOpacity 
           style={styles.contactBtn}
-          onPress={() => navigation.navigate('ChatScreen', { farmerId: item.farmerId, listingId: item.id })}
+          onPress={() => navigation.navigate('ChatScreen' as any, { 
+            partnerId: item.farmerId, 
+            partnerName: item.farmerName, 
+            partnerRole: 'FARMER',
+            cropName: item.cropName 
+          })}
         >
           <Icon name="chatbubble-ellipses" size={18} color={colors.common.white} />
           <Text style={styles.contactBtnText}>Contact</Text>
@@ -259,6 +292,34 @@ const styles = StyleSheet.create({
     padding: 20,
     borderRadius: 16,
     marginBottom: 20,
+  },
+  headerTitleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  notifIconContainer: {
+    padding: 8,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 12,
+  },
+  badge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: '#e24b4a',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: colors.buyer.primary,
+  },
+  badgeText: {
+    color: colors.common.white,
+    fontSize: 10,
+    fontWeight: 'bold',
   },
   headerTitle: {
     fontSize: 28,

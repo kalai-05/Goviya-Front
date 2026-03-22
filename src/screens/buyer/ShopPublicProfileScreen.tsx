@@ -58,11 +58,11 @@ const ShopPublicProfileScreen = () => {
     }, [shopId]);
 
     const handleInquire = (product: ShopProduct) => {
-        navigation.navigate('ChatScreen', {
-            targetUserId: shopId,
-            targetUserName: shopInfo?.name || 'Shop',
-            targetUserRole: 'SHOP',
-            contextTitle: product.productName
+        navigation.navigate('ChatScreen' as any, {
+            partnerId: shopId,
+            partnerName: shopInfo?.name || 'Shop',
+            partnerRole: 'SHOP',
+            cropName: product.productName
         });
     };
 

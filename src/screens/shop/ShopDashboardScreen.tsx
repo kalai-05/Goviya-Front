@@ -1,17 +1,19 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, ScrollView, RefreshControl, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, RefreshControl, ActivityIndicator } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useAuthStore } from '../../store/authStore';
-import { db, Collections } from '../../services/firebase';
+import { productService } from '../../services/productService';
+import api from '../../services/api';
 import { colors } from '../../constants/colors';
 
 type ShopStackParamList = {
-  Products: undefined; // Linked properly to ShopTabs 'Products' tab mapping
+  Products: undefined;
   Inquiries: undefined; 
   Stats: undefined; 
-  Reviews: undefined; // Anticipated future generic route mapping
+  Reviews: undefined;
 };
 
 type NavigationProp = NativeStackNavigationProp<ShopStackParamList>;
@@ -32,7 +34,6 @@ const ShopDashboardScreen = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [loadingInitial, setLoadingInitial] = useState(true);
 
-  // Hard mock of metrics since standard operations require multiple index collections
   const [mockStats, setMockStats] = useState({
     profileViews: 142,
     inquiriesToday: 5,
@@ -40,36 +41,20 @@ const ShopDashboardScreen = () => {
   });
 
   const fetchDashboardData = async () => {
-    if (!user?.id) return;
     try {
-      const snapshot = await db.collection(Collections.shop_products)
-        .where('shopId', '==', user.id)
-        .get();
-
-      const fetchedProducts: ShopProduct[] = [];
-      snapshot.forEach(doc => {
-        const data = doc.data();
-        fetchedProducts.push({
-          id: doc.id,
-          shopId: data.shopId,
-          name: data.name || 'Agri Product',
-          price: data.price || 0,
-          stockStatus: data.stockStatus || 'IN_STOCK',
-        });
-      });
-
-      // Dummy injection handling clean visual previews against empty DBs locally
-      if (fetchedProducts.length === 0) {
-        fetchedProducts.push(
-          { id: '1', shopId: user.id, name: 'Urea Fertilizer 50kg', price: 6500, stockStatus: 'IN_STOCK' },
-          { id: '2', shopId: user.id, name: 'Tomato Seeds (Hybrid)', price: 350, stockStatus: 'LOW_STOCK' },
-          { id: '3', shopId: user.id, name: 'Water Pump 2HP', price: 15000, stockStatus: 'OUT_OF_STOCK' }
-        );
+      const response = await productService.getShopProducts();
+      
+      if (response.success) {
+        const fetchedProducts: ShopProduct[] = response.data.map((item: any) => ({
+          id: item.id,
+          shopId: item.shopId,
+          name: item.name,
+          price: item.price,
+          stockStatus: item.stockStatus || 'IN_STOCK',
+        }));
+        setProducts(fetchedProducts);
       }
 
-      setProducts(fetchedProducts);
-      
-      // Randomize mock stats slightly mimicking real-time active UI shifts on refresh
       setMockStats(prev => ({
         ...prev,
         profileViews: prev.profileViews + Math.floor(Math.random() * 5),
@@ -107,7 +92,7 @@ const ShopDashboardScreen = () => {
   const QuickAction = ({ icon, title, route }: { icon: string, title: string, route: keyof ShopStackParamList }) => (
     <TouchableOpacity 
       style={styles.actionCard} 
-      onPress={() => navigation.navigate(route)}
+      onPress={() => navigation.navigate(route as any)}
       activeOpacity={0.8}
     >
       <View style={styles.actionIconContainer}>

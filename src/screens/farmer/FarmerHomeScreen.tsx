@@ -1,41 +1,13 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, FlatList, RefreshControl, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, RefreshControl, ActivityIndicator } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useAuthStore } from '../../store/authStore';
-import { db, Collections } from '../../services/firebase';
 import { colors } from '../../constants/colors';
-
-const OPEN_WEATHER_API_KEY = 'd81a3db9d9ee0d720a4f55ff49f1bf0e'; // TODO: Replace with your actual OpenWeatherMap API Key
-
-const SL_DISTRICT_COORDS: Record<string, {lat: number, lon: number}> = {
-  'Ampara': {lat: 7.2966, lon: 81.6724},
-  'Anuradhapura': {lat: 8.3114, lon: 80.4037},
-  'Badulla': {lat: 6.9934, lon: 81.0550},
-  'Batticaloa': {lat: 7.7126, lon: 81.6924},
-  'Colombo': {lat: 6.9271, lon: 79.8612},
-  'Galle': {lat: 6.0328, lon: 80.2168},
-  'Gampaha': {lat: 7.0873, lon: 79.9996},
-  'Hambantota': {lat: 6.1248, lon: 81.1185},
-  'Jaffna': {lat: 9.6615, lon: 80.0255},
-  'Kalutara': {lat: 6.5854, lon: 79.9607},
-  'Kandy': {lat: 7.2906, lon: 80.6337},
-  'Kegalle': {lat: 7.2513, lon: 80.3464},
-  'Kilinochchi': {lat: 9.3803, lon: 80.3770},
-  'Kurunegala': {lat: 7.4818, lon: 80.3609},
-  'Mannar': {lat: 8.9810, lon: 79.9044},
-  'Matale': {lat: 7.4675, lon: 80.6234},
-  'Matara': {lat: 5.9549, lon: 80.5469},
-  'Monaragala': {lat: 6.8728, lon: 81.3507},
-  'Mullaitivu': {lat: 9.2671, lon: 80.8142},
-  'Nuwara Eliya': {lat: 6.9497, lon: 80.7828},
-  'Polonnaruwa': {lat: 7.9403, lon: 81.0188},
-  'Puttalam': {lat: 8.0362, lon: 79.8283},
-  'Ratnapura': {lat: 6.7056, lon: 80.3847},
-  'Trincomalee': {lat: 8.5818, lon: 81.2336},
-  'Vavuniya': {lat: 8.7542, lon: 80.4982},
-};
+import { weatherService } from '../../services/weatherService';
+import { requestService } from '../../services/requestService';
 
 type FarmerStackParamList = {
   Prices: undefined;
@@ -75,21 +47,16 @@ const FarmerHomeScreen = () => {
 
   const fetchWeather = async () => {
     if (!user?.district) return;
-    const coords = SL_DISTRICT_COORDS[user.district];
-    if (!coords) return;
-    
     try {
-      const res = await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${coords.lat}&lon=${coords.lon}&units=metric&appid=${OPEN_WEATHER_API_KEY}`);
-      if (!res.ok) return;
-      const data = await res.json();
-      
-      const isRaining = data.weather.some((w: any) => w.main.toLowerCase().includes('rain'));
-      
-      setWeather({
-        temp: Math.round(data.main.temp),
-        condition: data.weather[0].main,
-        rainWarning: isRaining,
-      });
+      const response = await weatherService.getWeather(user.district);
+      if (response.success) {
+        const data = response.data;
+        setWeather({
+          temp: data.temperature || 0,
+          condition: data.description || 'Sunny',
+          rainWarning: (data.rainProbability || 0) > 60 || !!data.alert,
+        });
+      }
     } catch (error) {
       console.log('Error fetching weather:', error);
     }
@@ -98,25 +65,18 @@ const FarmerHomeScreen = () => {
   const fetchBuyerRequests = async () => {
     if (!user?.district) return;
     try {
-      const querySnapshot = await db.collection(Collections.buyer_requests)
-        .where('district', '==', user.district)
-        // .orderBy('createdAt', 'desc') // Warning: Requires a composite index in Firestore to sort with 'where' equality!
-        .limit(3)
-        .get();
-        
-      const reqs: BuyerRequest[] = [];
-      querySnapshot.forEach(doc => {
-        const data = doc.data();
-        reqs.push({
-          id: doc.id,
-          buyerId: data.buyerId || 'unknown',
-          crop: data.crop || 'Unknown Crop',
-          quantity: data.quantity || '0 kg',
-          maxPrice: data.maxPrice || 0,
-          distance: data.distance || Math.floor(Math.random() * 20) + 1, // Simulated fall-back
-        });
-      });
-      setBuyerRequests(reqs);
+      const response = await requestService.getRequests(user.district);
+      if (response.success) {
+        const mapped = response.data.slice(0, 3).map((item: any) => ({
+          id: item.id,
+          buyerId: item.buyerId,
+          crop: item.cropName,
+          quantity: `${item.quantityKg} kg`,
+          maxPrice: item.maxPricePerKg,
+          distance: item.distance || Math.floor(Math.random() * 10) + 1,
+        }));
+        setBuyerRequests(mapped);
+      }
     } catch (error) {
       console.error('Error fetching buyers:', error);
     }
@@ -137,7 +97,7 @@ const FarmerHomeScreen = () => {
   const QuickAction = ({ icon, title, route }: { icon: string, title: string, route: keyof FarmerStackParamList }) => (
     <TouchableOpacity 
       style={styles.actionCard} 
-      onPress={() => navigation.navigate(route)}
+      onPress={() => navigation.navigate(route as any)}
       activeOpacity={0.8}
     >
       <View style={styles.actionIconContainer}>
@@ -181,7 +141,7 @@ const FarmerHomeScreen = () => {
 
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Nearby Buyers</Text>
-        <TouchableOpacity onPress={() => navigation.navigate('Requests')}>
+        <TouchableOpacity onPress={() => navigation.navigate('Requests' as any)}>
           <Text style={styles.seeAllText}>See All</Text>
         </TouchableOpacity>
       </View>
@@ -200,7 +160,7 @@ const FarmerHomeScreen = () => {
       </View>
       <TouchableOpacity 
         style={styles.respondButton} 
-        onPress={() => navigation.navigate('ChatScreen', { buyerId: item.buyerId, requestId: item.id })}
+        onPress={() => navigation.navigate('ChatScreen' as any, { buyerId: item.buyerId, requestId: item.id })}
       >
         <Text style={styles.respondButtonText}>Respond</Text>
       </TouchableOpacity>

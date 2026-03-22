@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, FlatList, RefreshControl, ActivityIndicator, Alert, Animated } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, RefreshControl, ActivityIndicator, Alert, Animated } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { Swipeable } from 'react-native-gesture-handler';
 import { useAuthStore } from '../../store/authStore';
-import { db, Collections } from '../../services/firebase';
+import { listingService } from '../../services/listingService';
 import { colors } from '../../constants/colors';
 
 type FarmerStackParamList = {
@@ -35,43 +36,29 @@ const MyListingsScreen = () => {
   const [loadingInitial, setLoadingInitial] = useState(true);
 
   const fetchListings = async () => {
-    if (!user?.id) return;
     try {
-      const snapshot = await db.collection(Collections.produce_listings)
-        .where('farmerId', '==', user.id)
-        .get();
+      const response = await listingService.getMyListings();
+      if (response.success) {
+        const fetched: ProduceListing[] = response.data.map((item: any) => ({
+          id: item.id,
+          farmerId: item.farmerId,
+          cropEmoji: item.cropEmoji || '📦',
+          cropName: item.cropName || 'Produce',
+          quantity: item.quantityKg ? `${item.quantityKg} kg` : '0 kg',
+          price: item.pricePerKg || 0,
+          status: item.status || 'ACTIVE',
+          expiryDate: item.expiresAt || new Date(Date.now() + 86400000 * 3).toISOString(),
+        }));
 
-      const fetched: ProduceListing[] = [];
-      snapshot.forEach(doc => {
-        const data = doc.data();
-        fetched.push({
-          id: doc.id,
-          farmerId: data.farmerId,
-          cropEmoji: data.cropEmoji || '📦',
-          cropName: data.cropName || 'Produce',
-          quantity: data.quantity || '0 kg',
-          price: data.price || 0,
-          status: data.status || 'ACTIVE',
-          expiryDate: data.expiryDate || new Date(Date.now() + 86400000 * 3).toISOString(), // 3 days simulated fallback
+        // Automatically organize purely active up front 
+        fetched.sort((a, b) => {
+          if (a.status === 'ACTIVE' && b.status !== 'ACTIVE') return -1;
+          if (a.status !== 'ACTIVE' && b.status === 'ACTIVE') return 1;
+          return 0;
         });
-      });
 
-      // Dummy state injection for blank databases
-      if (fetched.length === 0) {
-        fetched.push(
-          { id: '1', farmerId: user.id, cropEmoji: '🍅', cropName: 'Tomato', quantity: '200 kg', price: 180, status: 'ACTIVE', expiryDate: new Date(Date.now() + 86400000 * 2).toISOString() },
-          { id: '2', farmerId: user.id, cropEmoji: '🥕', cropName: 'Carrot', quantity: '50 kg', price: 250, status: 'SOLD', expiryDate: new Date(Date.now() - 86400000 * 1).toISOString() }
-        );
+        setListings(fetched);
       }
-
-      // Automatically organize purely active up front 
-      fetched.sort((a, b) => {
-        if (a.status === 'ACTIVE' && b.status !== 'ACTIVE') return -1;
-        if (a.status !== 'ACTIVE' && b.status === 'ACTIVE') return 1;
-        return 0;
-      });
-
-      setListings(fetched);
     } catch (error) {
       console.error('Error fetching listings:', error);
     }
@@ -85,8 +72,11 @@ const MyListingsScreen = () => {
   }, [user]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    const unsubscribe = navigation.addListener('focus', () => {
+      loadData();
+    });
+    return unsubscribe;
+  }, [navigation, loadData]);
 
 
   const getCountdown = (isoString: string) => {
@@ -110,14 +100,14 @@ const MyListingsScreen = () => {
   };
 
   const handleDelete = (id: string) => {
-    Alert.alert('Delete Listing', 'Are you sure you want to continuously delete this listing?', [
+    Alert.alert('Delete Listing', 'Are you sure you want to delete this listing?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: async () => {
           try {
-            await db.collection(Collections.produce_listings).doc(id).delete();
+            await listingService.deleteListing(id);
             setListings(prev => prev.filter(l => l.id !== id));
           } catch (error) {
-            Alert.alert('Error', 'Failed to securely delete listing.');
+            Alert.alert('Error', 'Failed to delete listing.');
           }
         } 
       }

@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, FlatList, RefreshControl, ActivityIndicator, Linking, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, RefreshControl, ActivityIndicator, Linking, Platform } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useAuthStore } from '../../store/authStore';
-import { db, Collections } from '../../services/firebase';
+import { shopService } from '../../services/shopService';
 import { colors } from '../../constants/colors';
 
 type BuyerStackParamList = {
@@ -34,47 +35,27 @@ const AgriShopsScreen = () => {
   const [loadingInitial, setLoadingInitial] = useState(true);
 
   const fetchShops = async () => {
-    if (!user?.district) return;
     try {
-      const snapshot = await db.collection(Collections.users)
-        .where('role', '==', 'SHOP')
-        .where('district', '==', user.district)
-        .get();
-
-      // Evaluating native device time to accurately reflect mocked opening hours (8am - 6pm)
+      const response = await shopService.getShops(user?.district);
+      
       const currentHour = new Date().getHours();
       const mockIsOpen = currentHour >= 8 && currentHour <= 18; 
 
-      const fetchedShops: AgriShop[] = [];
-      snapshot.forEach(doc => {
-        const data = doc.data();
-        
-        fetchedShops.push({
-          id: doc.id,
-          shopName: data.name || 'Agri Shop',
-          district: data.district || '',
-          distance: data.distance || Math.floor(Math.random() * 15) + 1,
-          rating: data.rating || parseFloat((Math.random() * (5.0 - 4.0) + 4.0).toFixed(1)),
-          isOpen: data.isOpen !== undefined ? data.isOpen : mockIsOpen,
-          categories: data.categories || ['Seeds', 'Fertilizer', 'Tools'],
-          latitude: data.latitude,
-          longitude: data.longitude,
-        });
-      });
+      if (response.success) {
+        const fetchedShops: AgriShop[] = response.data.map((item: any) => ({
+          id: item.id,
+          shopName: item.name || 'Agri Shop',
+          district: item.district || '',
+          distance: item.distance || Math.floor(Math.random() * 15) + 1,
+          rating: item.rating || 4.5,
+          isOpen: item.isOpen !== undefined ? item.isOpen : mockIsOpen,
+          categories: item.categories || ['Seeds', 'Fertilizer', 'Tools'],
+          latitude: item.latitude,
+          longitude: item.longitude,
+        }));
 
-      // Dummy injection if database queries return totally blank on initial startup
-      if (fetchedShops.length === 0) {
-        fetchedShops.push(
-          { id: 's1', shopName: 'Saman Agri Center', district: user.district, distance: 3, rating: 4.8, isOpen: mockIsOpen, categories: ['Fertilizer', 'Seeds'] },
-          { id: 's2', shopName: 'Nimal Hardware & Plant Nursery', district: user.district, distance: 8, rating: 4.2, isOpen: mockIsOpen, categories: ['Tools', 'Plants'] },
-          { id: 's3', shopName: 'Govijana Services Store', district: user.district, distance: 12, rating: 4.9, isOpen: false, categories: ['Chemicals', 'Fertilizer', 'Tools'] }
-        );
+        setShops(fetchedShops.sort((a, b) => a.distance - b.distance));
       }
-
-      // Natively sort the closest options upwards without heavy mapping APIs
-      fetchedShops.sort((a, b) => a.distance - b.distance);
-
-      setShops(fetchedShops);
     } catch (error) {
       console.error('Error fetching shops:', error);
     }

@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, TextInput, Image, ActivityIndicator, Alert, Modal, FlatList, ScrollView, Platform, KeyboardAvoidingView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, Image, ActivityIndicator, Alert, Modal, FlatList, ScrollView, Platform, KeyboardAvoidingView } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { launchImageLibrary, Asset } from 'react-native-image-picker';
 import Geolocation from '@react-native-community/geolocation';
 import { useAuthStore } from '../../store/authStore';
-import { db, fbStorage, Collections } from '../../services/firebase';
+import { fbStorage } from '../../services/firebase';
+import api from '../../services/api';
+import { listingService } from '../../services/listingService';
 import { colors } from '../../constants/colors';
 
 const SRI_LANKA_DISTRICTS = [
@@ -38,7 +41,7 @@ const EXPIRY_OPTIONS = [
 ];
 
 const CreateListingScreen = () => {
-  const navigation = useNavigation();
+  const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const user = useAuthStore(state => state.user);
   
@@ -50,7 +53,7 @@ const CreateListingScreen = () => {
   const [price, setPrice] = useState('');
   const [district, setDistrict] = useState(user?.district || '');
   const [description, setDescription] = useState('');
-  const [expiryDays, setExpiryDays] = useState(7); // Default exactly 7 days
+  const [expiryDays, setExpiryDays] = useState(7); 
   const [image, setImage] = useState<Asset | null>(null);
   const [location, setLocation] = useState<{lat: number, lon: number} | null>(null);
 
@@ -60,7 +63,6 @@ const CreateListingScreen = () => {
   const [isExpiryModalVisible, setExpiryModalVisible] = useState(false);
 
   useEffect(() => {
-    // Attempt GPS coordinate resolving safely natively
     Geolocation.getCurrentPosition(
       (position) => {
         setLocation({
@@ -68,10 +70,36 @@ const CreateListingScreen = () => {
           lon: position.coords.longitude,
         });
       },
-      (error) => console.log('Geolocation fetch disabled or error:', error),
+      (error) => console.log('Geolocation error:', error),
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
     );
   }, []);
+
+  useEffect(() => {
+    if (listingId) {
+      const loadListing = async () => {
+        try {
+          const response = await listingService.getListing(listingId);
+          if (response.success) {
+            const data = response.data;
+            const cropMatch = COMMON_CROPS.find(c => c.name === data.cropName);
+            setCrop(cropMatch || { name: data.cropName, emoji: '📦' });
+            setQuantity(data.quantityKg?.toString() || '');
+            setPrice(data.pricePerKg?.toString() || '');
+            setDistrict(data.district || '');
+            setDescription(data.description || '');
+            if (data.imageUrl) {
+              setImage({ uri: data.imageUrl } as Asset);
+            }
+          }
+        } catch (error) {
+          console.error('Error loading listing for edit:', error);
+          Alert.alert('Error', 'Failed to load listing details.');
+        }
+      };
+      loadListing();
+    }
+  }, [listingId]);
 
   const handleSelectImage = async () => {
     const result = await launchImageLibrary({ mediaType: 'photo', quality: 0.7 });
@@ -82,7 +110,7 @@ const CreateListingScreen = () => {
 
   const handleSave = async () => {
     if (!crop || !quantity || !price || !district) {
-      Alert.alert('Incomplete Fields', 'Please select a crop, quantity, price, and district to list your harvest.');
+      Alert.alert('Incomplete Fields', 'Please fill in all required fields.');
       return;
     }
 
@@ -90,49 +118,65 @@ const CreateListingScreen = () => {
     try {
       let imageUrl = '';
 
-      // Check if they uploaded an image to push to Firebase Cloud Storage
+      // Image upload via Firebase Storage 
       if (image && image.uri && !image.uri.startsWith('http')) {
-        const fileName = `listings/${user?.id}_${Date.now()}.jpg`;
-        const reference = fbStorage.ref(fileName);
-        await reference.putFile(image.uri);
-        imageUrl = await reference.getDownloadURL();
+        try {
+          const fileName = `listings/${user?.id}_${Date.now()}.jpg`;
+          const imgRef = fbStorage.ref(fileName);
+          
+          // Decoding URI for Android compatibility
+          const uploadUri = Platform.OS === 'android' && image.uri.startsWith('file://') 
+            ? decodeURI(image.uri).replace('file://', '') 
+            : image.uri;
+
+          console.log('Attempting upload from:', uploadUri);
+          await imgRef.putFile(image.uri); // RN Firebase handles file:// prefix internally
+          
+          let retries = 5;
+          while (retries > 0) {
+            try {
+              imageUrl = await imgRef.getDownloadURL();
+              console.log('Successfully retrieved URL:', imageUrl);
+              break; 
+            } catch (e) {
+              retries--;
+              if (retries === 0) throw e;
+              console.log(`URL retrieval failed, retrying... (${retries} left)`);
+              await new Promise<void>(resolve => setTimeout(resolve, 2000));
+            }
+          }
+        } catch (storageErr: any) {
+          console.error('Firebase Storage Error:', storageErr);
+        }
       }
 
-      // Compute exact ISO time for expiry logic
       const expiryDate = new Date(Date.now() + (86400000 * expiryDays)).toISOString();
 
       const listingData: any = {
-        farmerId: user?.id,
-        farmerName: user?.name,
         cropName: crop.name,
         cropEmoji: crop.emoji,
-        quantity: `${quantity} kg`, 
-        price: parseFloat(price),
+        quantityKg: parseFloat(quantity), 
+        pricePerKg: parseFloat(price),
         district,
         description: description.trim(),
-        expiryDate,
-        status: 'ACTIVE',
+        expiresAt: expiryDate,
         latitude: location?.lat || null,
         longitude: location?.lon || null,
-        updatedAt: new Date().toISOString(),
+        imageUrl: imageUrl || undefined
       };
 
-      if (imageUrl) listingData.imageUrl = imageUrl;
-
       if (listingId) {
-        // Edit mode
-        await db.collection(Collections.produce_listings).doc(listingId).set(listingData, { merge: true });
+        await listingService.updateListing(listingId, listingData);
       } else {
-        // Create mode
-        listingData.createdAt = new Date().toISOString();
-        await db.collection(Collections.produce_listings).add(listingData);
+        await listingService.createListing(listingData);
       }
 
-      Alert.alert('Success!', 'Your harvest has been listed on the market.', [
+      Alert.alert('Success!', 'Your harvest has been listed.', [
         { text: 'OK', onPress: () => navigation.goBack() }
       ]);
     } catch (error: any) {
-      Alert.alert('Upload Error', error.message || 'Failed to save securely to the database.');
+      console.error('Save error:', error);
+      Alert.alert('Error', error.response?.data?.message || 'Failed to save listing.');
     } finally {
       setIsSubmitting(false);
     }

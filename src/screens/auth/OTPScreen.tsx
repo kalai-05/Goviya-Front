@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Alert } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { sendOTP, verifyOTP } from '../../services/authService';
@@ -26,7 +27,6 @@ const OTPScreen = () => {
 
     setIsLoading(true);
     try {
-      // Assuming +94 prefix for Sri Lanka, removing leading zero if typed
       const formattedNumber = `+94${phoneNumber.replace(/^0+/, '')}`; 
       await sendOTP(formattedNumber);
       setIsOtpSent(true);

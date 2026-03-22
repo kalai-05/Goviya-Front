@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, TextInput, ActivityIndicator, Alert, Modal, FlatList, ScrollView, Platform, KeyboardAvoidingView } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator, Alert, Modal, FlatList, ScrollView, Platform, KeyboardAvoidingView } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useAuthStore } from '../../store/authStore';
-import { db, Collections } from '../../services/firebase';
+import { requestService } from '../../services/requestService';
 import { colors } from '../../constants/colors';
 
 const SRI_LANKA_DISTRICTS = [
@@ -31,9 +32,12 @@ const COMMON_CROPS = [
 
 type NavigationProp = NativeStackNavigationProp<any>;
 
-const PostRequestScreen = () => {
+const PostRequestForm = () => {
   const navigation = useNavigation<NavigationProp>();
+  const route = useRoute<any>();
   const user = useAuthStore(state => state.user);
+  
+  const requestId = route.params?.requestId;
 
   const [crop, setCrop] = useState<{name: string, emoji: string} | null>(null);
   const [quantity, setQuantity] = useState('');
@@ -45,57 +49,62 @@ const PostRequestScreen = () => {
   const [isCropModalVisible, setCropModalVisible] = useState(false);
   const [isDistrictModalVisible, setDistrictModalVisible] = useState(false);
 
+  useEffect(() => {
+    if (requestId) {
+      const loadRequest = async () => {
+        try {
+          // You might need a getRequestById in requestService, assuming getRequests can find it
+          const response = await requestService.getMyRequests();
+          if (response.success) {
+            const item = response.data.find((r: any) => r.id === requestId);
+            if (item) {
+              const cropMatch = COMMON_CROPS.find(c => c.name === item.cropName);
+              setCrop(cropMatch || { name: item.cropName, emoji: '📦' });
+              setQuantity(item.quantityKg?.toString() || '');
+              setMaxPrice(item.maxPricePerKg?.toString() || '');
+              setDistrict(item.district || '');
+              setDescription(item.description || '');
+            }
+          }
+        } catch (error) {
+          console.error('Error loading request for edit:', error);
+        }
+      };
+      loadRequest();
+    }
+  }, [requestId]);
+
   const handleSave = async () => {
     if (!crop || !quantity || !maxPrice || !district) {
-      Alert.alert('Incomplete Fields', 'Please select a crop, quantity, max price, and district to post your request.');
+      Alert.alert('Incomplete Fields', 'Please fill in all required fields.');
       return;
     }
 
     setIsSubmitting(true);
     try {
-      // 1. Save directly to buyer_requests table
       const requestData = {
-        buyerId: user?.id,
-        buyerName: user?.name,
         cropName: crop.name,
         cropEmoji: crop.emoji,
-        quantity: `${quantity} kg`,
-        maxPrice: parseFloat(maxPrice),
+        quantityKg: parseFloat(quantity),
+        maxPricePerKg: parseFloat(maxPrice),
         district,
         description: description.trim(),
-        status: 'OPEN',
-        createdAt: new Date().toISOString(),
-        timePosted: 'Just now', // Standard localized offset logic in front end or handled explicitly securely
-        responseCount: 0,
-        distance: Math.floor(Math.random() * 20) + 1, // Fallback random distance mapping natively to nearest nodes without geo indexes
       };
 
-      await db.collection(Collections.buyer_requests).add(requestData);
+      const response = requestId 
+        ? await requestService.updateRequest(requestId, requestData)
+        : await requestService.createRequest(requestData);
 
-      // 2. Send FCM push notification to all FARMER users in that targeted district via backend API
-      const BACKEND_URL = 'https://api.goviya.com/v1/notifications/notifyFarmers'; 
-      try {
-        await fetch(BACKEND_URL, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            district: district,
-            cropName: crop.name,
-            buyerName: user?.name,
-          }),
-        });
-      } catch (fcmError) {
-        // Non-blocking notification error handling gracefully 
-        console.log('FCM Notification error:', fcmError);
+      if (response.success) {
+        Alert.alert('Success!', `Your request has been ${requestId ? 'updated' : 'posted'}!`, [
+          { text: 'OK', onPress: () => navigation.goBack() }
+        ]);
+      } else {
+        throw new Error(response.message || 'Failed to save request');
       }
-
-      Alert.alert('Success!', 'Your request has been posted! Notifications have been pushed to local farmers.', [
-        { text: 'OK', onPress: () => navigation.navigate('Home') }
-      ]);
     } catch (error: any) {
-      Alert.alert('Upload Error', error.message || 'Failed to post request.');
+      console.error('Post Request Error:', error);
+      Alert.alert('Error', error.response?.data?.message || error.message || 'Failed to post request.');
     } finally {
       setIsSubmitting(false);
     }
@@ -104,8 +113,10 @@ const PostRequestScreen = () => {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Post a Request</Text>
-        <Text style={styles.headerSubtitle}>Let farmers know what you need</Text>
+        <Text style={styles.headerTitle}>{requestId ? 'Edit Request' : 'Post a Request'}</Text>
+        <Text style={styles.headerSubtitle}>
+          {requestId ? 'Update your help requirement' : 'Let farmers know what you need'}
+        </Text>
       </View>
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
@@ -171,7 +182,7 @@ const PostRequestScreen = () => {
             {isSubmitting ? (
               <ActivityIndicator color={colors.common.white} />
             ) : (
-              <Text style={styles.submitButtonText}>Post Request</Text>
+              <Text style={styles.submitButtonText}>{requestId ? 'Update Request' : 'Post Request'}</Text>
             )}
           </TouchableOpacity>
         </ScrollView>
@@ -373,4 +384,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default PostRequestScreen;
+export default PostRequestForm;

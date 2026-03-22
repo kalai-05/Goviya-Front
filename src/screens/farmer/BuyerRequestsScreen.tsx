@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, FlatList, RefreshControl, ActivityIndicator, Modal, TextInput, Alert, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, RefreshControl, ActivityIndicator, Modal, TextInput, Alert, KeyboardAvoidingView, Platform } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useAuthStore } from '../../store/authStore';
-import { db, Collections } from '../../services/firebase';
+import { requestService } from '../../services/requestService';
 import { colors } from '../../constants/colors';
 
 const FILTERS = ['All', 'Near me', 'My crops'];
@@ -49,38 +50,22 @@ const BuyerRequestsScreen = () => {
   const fetchRequests = async () => {
     if (!user?.district) return;
     try {
-      const snapshot = await db.collection(Collections.buyer_requests)
-        .where('status', '==', 'OPEN')
-        .where('district', '==', user.district)
-        .get();
-
-      const fetchedReqs: BuyerRequest[] = [];
-      snapshot.forEach(doc => {
-        const data = doc.data();
-        fetchedReqs.push({
-          id: doc.id,
-          buyerId: data.buyerId || 'unknown_buyer',
-          buyerName: data.buyerName || 'Buyer',
-          cropEmoji: data.cropEmoji || '🥬',
-          cropName: data.cropName || 'Vegetable',
-          quantity: data.quantity || '100 kg',
-          maxPrice: data.maxPrice || 0,
-          distance: data.distance || Math.floor(Math.random() * 20) + 1,
-          timePosted: data.timePosted || '2h ago',
-          responseCount: data.responseCount || Math.floor(Math.random() * 5),
-        });
-      });
-
-      // Dummy data injection for local debugging if DB is empty 
-      if (fetchedReqs.length === 0) {
-        fetchedReqs.push(
-          { id: '1', buyerId: 'b1', buyerName: 'Suresh', cropEmoji: '🍅', cropName: 'Tomato', quantity: '500 kg', maxPrice: 280, distance: 3, timePosted: '1h ago', responseCount: 2 },
-          { id: '2', buyerId: 'b2', buyerName: 'Nimali', cropEmoji: '🥕', cropName: 'Carrot', quantity: '200 kg', maxPrice: 300, distance: 8, timePosted: '3h ago', responseCount: 0 },
-          { id: '3', buyerId: 'b3', buyerName: 'Kamal', cropEmoji: '🍌', cropName: 'Banana', quantity: '1000 kg', maxPrice: 110, distance: 15, timePosted: '5h ago', responseCount: 4 },
-        );
+      const response = await requestService.getRequests(user.district);
+      if (response.success) {
+        const fetchedReqs: BuyerRequest[] = response.data.map((item: any) => ({
+          id: item.id,
+          buyerId: item.buyerId || 'unknown_buyer',
+          buyerName: item.buyerName || 'Buyer',
+          cropEmoji: item.cropEmoji || '🥬',
+          cropName: item.cropName || 'Vegetable',
+          quantity: item.quantity || '100 kg',
+          maxPrice: item.maxPrice || 0,
+          distance: item.distance || Math.floor(Math.random() * 20) + 1,
+          timePosted: item.timePosted || 'Recently',
+          responseCount: item.responseCount || 0,
+        }));
+        setRequests(fetchedReqs);
       }
-
-      setRequests(fetchedReqs);
     } catch (error) {
       console.error('Error fetching buyer requests:', error);
     }
@@ -115,15 +100,9 @@ const BuyerRequestsScreen = () => {
 
     setIsSubmitting(true);
     try {
-      await db.collection(Collections.request_responses).add({
-        requestId: selectedRequest.id,
-        buyerId: selectedRequest.buyerId,
-        farmerId: user?.id,
-        farmerName: user?.name,
+      await requestService.respondToRequest(selectedRequest.id, {
         offeredPrice: parseFloat(offerPrice),
         message: message.trim(),
-        createdAt: new Date().toISOString(),
-        status: 'PENDING'
       });
 
       const buyerId = selectedRequest.buyerId;
@@ -133,8 +112,8 @@ const BuyerRequestsScreen = () => {
       setOfferPrice('');
       setMessage('');
       
-      // Pivot directly into a ChatScreen instance 
-      navigation.navigate('ChatScreen', { buyerId, requestId: reqId });
+      Alert.alert('Success', 'Your offer has been sent!');
+      navigation.navigate('ChatScreen' as any, { buyerId, requestId: reqId });
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to submit offer');
     } finally {

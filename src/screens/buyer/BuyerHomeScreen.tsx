@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, FlatList, RefreshControl, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, RefreshControl, ActivityIndicator } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useAuthStore } from '../../store/authStore';
-import { db, Collections } from '../../services/firebase';
+import { listingService } from '../../services/listingService';
 import { colors } from '../../constants/colors';
 
 const FILTERS = ['All', 'Veg', 'Fruit', 'Near me'];
@@ -45,102 +46,57 @@ const BuyerHomeScreen = () => {
   
   const [refreshing, setRefreshing] = useState(false);
   const [loadingInitial, setLoadingInitial] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [lastDoc, setLastDoc] = useState<any>(null);
-  const [hasMore, setHasMore] = useState(true);
 
-  const PAGE_LIMIT = 8;
-
-  const fetchListings = async (loadMore = false) => {
-    if (loadMore && (!hasMore || loadingMore)) return;
-
+  const fetchListings = async () => {
     try {
-      if (loadMore) setLoadingMore(true);
-
-      // We enforce standard limits mapped directly to Firestore cursors for native Pagination
-      let query = db.collection(Collections.produce_listings)
-        .where('status', '==', 'ACTIVE')
-        .orderBy('createdAt', 'desc')
-        .limit(PAGE_LIMIT);
-
-      if (loadMore && lastDoc) {
-        query = query.startAfter(lastDoc);
-      }
-
-      const snapshot = await query.get();
+      const district = selectedFilter === 'Near me' ? user?.district : undefined;
+      const response = await listingService.getListings(district || '');
       
-      if (snapshot.docs.length < PAGE_LIMIT) {
-        setHasMore(false);
-      } else {
-        setHasMore(true);
-      }
+      if (response.success) {
+        const fetched: ProduceListing[] = response.data.map((item: any) => {
+          // Simulated metrics since backend might not have them yet
+          let simDistance = Math.floor(Math.random() * 50) + 1;
+          if (item.district === user?.district) {
+            simDistance = Math.floor(Math.random() * 10) + 1; 
+          }
 
-      if (snapshot.docs.length > 0) {
-        setLastDoc(snapshot.docs[snapshot.docs.length - 1]);
-      }
-
-      const fetched: ProduceListing[] = [];
-      snapshot.forEach(doc => {
-        const data = doc.data();
-        
-        // Simulating robust map distances and metrics natively without heavy back-end extensions during dev
-        let simDistance = Math.floor(Math.random() * 50) + 1;
-        if (data.district === user?.district) {
-          simDistance = Math.floor(Math.random() * 10) + 1; 
-        }
-
-        const simRating = (Math.random() * (5.0 - 3.5) + 3.5).toFixed(1);
-        const freshnessOptions = ['Harvested Today', '1 Day Old', 'Freshly Picked'];
-        const simFreshness = freshnessOptions[Math.floor(Math.random() * freshnessOptions.length)];
-
-        fetched.push({
-          id: doc.id,
-          farmerId: data.farmerId || 'f1',
-          farmerName: data.farmerName || 'Unknown Farmer',
-          cropEmoji: data.cropEmoji || '📦',
-          cropName: data.cropName || 'Produce',
-          quantity: data.quantity || '0 kg',
-          price: data.price || 0,
-          district: data.district || '',
-          distance: data.distance || simDistance,
-          rating: data.rating || parseFloat(simRating),
-          freshness: data.freshness || simFreshness,
-          imageUrl: data.imageUrl,
-          createdAt: data.createdAt || new Date().toISOString(),
+          return {
+            id: item.id,
+            farmerId: item.farmerId,
+            farmerName: item.farmerName || 'Farmer',
+            cropEmoji: item.cropEmoji || '📦',
+            cropName: item.cropName,
+            quantity: item.quantityKg ? `${item.quantityKg} kg` : '0 kg',
+            price: item.pricePerKg || 0,
+            district: item.district,
+            distance: item.distance || simDistance,
+            rating: item.rating || 4.5,
+            freshness: item.freshness || 'Fresh',
+            imageUrl: item.imageUrl,
+            createdAt: item.createdAt,
+          };
         });
-      });
 
-      // Seeding database locally if blank, ensuring presentation succeeds
-      if (!loadMore && fetched.length === 0) {
-        fetched.push(
-          { id: '1', farmerId: 'f1', farmerName: 'Sunil Silva', cropEmoji: '🍅', cropName: 'Tomato', quantity: '500 kg', price: 180, distance: 5, rating: 4.8, freshness: 'Harvested Today', createdAt: new Date().toISOString(), district: 'Colombo' },
-          { id: '2', farmerId: 'f2', farmerName: 'Kamal Perera', cropEmoji: '🍌', cropName: 'Banana', quantity: '200 kg', price: 120, distance: 15, rating: 4.2, freshness: '1 Day Old', createdAt: new Date().toISOString(), district: 'Gampaha' },
-          { id: '3', farmerId: 'f3', farmerName: 'Nimali', cropEmoji: '🥕', cropName: 'Carrot', quantity: '50 kg', price: 250, distance: 3, rating: 4.9, freshness: 'Freshly Picked', createdAt: new Date().toISOString(), district: 'Colombo' },
-          { id: '4', farmerId: 'f4', farmerName: 'Upali', cropEmoji: '🌾', cropName: 'Rice (Nadu)', quantity: '1000 kg', price: 210, distance: 45, rating: 4.5, freshness: 'Harvested Today', createdAt: new Date().toISOString(), district: 'Anuradhapura' }
-        );
-        setHasMore(false);
+        setListings(fetched);
       }
-
-      setListings(prev => loadMore ? [...prev, ...fetched] : fetched);
     } catch (error) {
       console.error('Error fetching listings:', error);
-    } finally {
-      setLoadingMore(false);
     }
   };
 
   const loadInitialData = useCallback(async () => {
     setRefreshing(true);
-    setLastDoc(null);
-    setHasMore(true);
-    await fetchListings(false);
+    await fetchListings();
     setRefreshing(false);
     setLoadingInitial(false);
-  }, [user]);
+  }, [user, selectedFilter]);
 
   useEffect(() => {
-    loadInitialData();
-  }, [loadInitialData]);
+    const unsubscribe = navigation.addListener('focus', () => {
+      loadInitialData();
+    });
+    return unsubscribe;
+  }, [navigation, loadInitialData]);
 
   const getFilteredListings = () => {
     let result = [...listings];
@@ -241,11 +197,8 @@ const BuyerHomeScreen = () => {
   );
 
   const renderFooter = () => {
-    if (!loadingMore) return null;
     return (
-      <View style={styles.paginationLoader}>
-        <ActivityIndicator size="small" color={colors.buyer.primary} />
-      </View>
+      <View style={styles.paginationLoader} />
     );
   };
 
@@ -263,8 +216,6 @@ const BuyerHomeScreen = () => {
           renderItem={renderItem}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
-          onEndReached={() => fetchListings(true)}
-          onEndReachedThreshold={0.5}
           ListFooterComponent={renderFooter}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={loadInitialData} colors={[colors.buyer.primary]} />

@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, Image, FlatList, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Image, FlatList, ActivityIndicator } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { launchCamera, launchImageLibrary, Asset } from 'react-native-image-picker';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useAuthStore } from '../../store/authStore';
-import { db, Collections } from '../../services/firebase';
+import { shopService } from '../../services/shopService';
 import { colors } from '../../constants/colors';
 
 interface ShopProduct {
@@ -58,33 +59,25 @@ const CropScannerScreen = () => {
   const fetchNearbyShops = async () => {
     if (!user?.district) return;
     try {
-      const snapshot = await db.collection(Collections.shop_products)
-        .where('district', '==', user.district)
-        .limit(5)
-        .get();
+      const response = await shopService.getShops(user.district);
 
-      const shops: ShopProduct[] = [];
-      snapshot.forEach(doc => {
-        const data = doc.data();
-        shops.push({
-          id: doc.id,
-          shopName: data.shopName || 'Agri Shop',
-          productName: data.name || 'Fungicide',
-          price: data.price || 0,
-          distance: data.distance || Math.floor(Math.random() * 10) + 1, // Fallback random distance
-        });
-      });
+      if (response.success) {
+        const shops: ShopProduct[] = response.data.map((item: any) => ({
+          id: item.id,
+          shopName: item.name || 'Agri Shop',
+          productName: item.productName || 'Agri Product', // Adjusted to match potential API fields
+          price: item.price || 0,
+          distance: item.distance || Math.floor(Math.random() * 10) + 1,
+        }));
 
-      // Client-side sort if Firestore distance doesn't naturally order correctly under limit queries
-      shops.sort((a, b) => a.distance - b.distance);
-
-      // Populate mock data if DB runs empty for preview
-      if (shops.length === 0) {
-        shops.push({ id: '1', shopName: 'Saman Agri Center', productName: 'Copper Oxychloride 50%', price: 1200, distance: 3 });
-        shops.push({ id: '2', shopName: 'Nimal Hardware & Agri', productName: 'Mancozeb 80%', price: 850, distance: 5 });
+        setNearbyShops(shops.sort((a, b) => a.distance - b.distance));
+      } else if (response.data?.length === 0) {
+        // Populate mock data if DB runs empty for preview
+        setNearbyShops([
+          { id: '1', shopName: 'Saman Agri Center', productName: 'Copper Oxychloride 50%', price: 1200, distance: 3 },
+          { id: '2', shopName: 'Nimal Hardware & Agri', productName: 'Mancozeb 80%', price: 850, distance: 5 },
+        ]);
       }
-
-      setNearbyShops(shops);
     } catch (error) {
       console.error('Failed to fetch shops', error);
     }

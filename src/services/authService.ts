@@ -1,13 +1,15 @@
-import auth from '@react-native-firebase/auth';
+import auth, { getAuth } from '@react-native-firebase/auth';
 import api from './api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuthStore } from '../store/authStore';
 
+// Accessing the auth instance as a direct export
+const authInstance = auth();
 let confirmationResult: any = null;
 
 export const sendOTP = async (phone: string): Promise<void> => {
   try {
-    confirmationResult = await auth().signInWithPhoneNumber(phone);
+    confirmationResult = await authInstance.signInWithPhoneNumber(phone);
   } catch (error: any) {
     console.error('Error in sendOTP:', error);
     throw new Error(error.message);
@@ -20,16 +22,13 @@ export const verifyOTP = async (phone: string, otp: string): Promise<void> => {
       throw new Error('No OTP request found. Please request an OTP first.');
     }
     
-    // 1. Verify with Firebase natively 
     await confirmationResult.confirm(otp);
 
-    // 2. Get the Firebase ID Token from the newly authenticated user 
-    const currentUser = auth().currentUser;
+    const currentUser = authInstance.currentUser;
     if (!currentUser) throw new Error('Firebase session lost');
     
     const idToken = await currentUser.getIdToken();
 
-    // 3. Handshake with local Backend to get a project-specific JWT 
     const response = await api.post('/auth/firebase-login', { idToken });
     const { success, data, message } = response.data;
     
@@ -39,7 +38,6 @@ export const verifyOTP = async (phone: string, otp: string): Promise<void> => {
 
     const { token, user } = data;
     
-    // 4. Securely cache local backend credentials 
     await AsyncStorage.setItem('jwt_token', token);
     useAuthStore.getState().setUser(user);
     
@@ -80,7 +78,7 @@ export const fetchCurrentUser = async (): Promise<void> => {
 
 export const logout = async (): Promise<void> => {
   try {
-    await auth().signOut();
+    await authInstance.signOut();
     await AsyncStorage.removeItem('jwt_token');
     useAuthStore.getState().logout();
   } catch (error) {

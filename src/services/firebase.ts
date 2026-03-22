@@ -1,9 +1,10 @@
+import firebase from '@react-native-firebase/app';
 import auth from '@react-native-firebase/auth';
 import firestore from '@react-native-firebase/firestore';
 import storage from '@react-native-firebase/storage';
 
 // In React Native CLI, Firebase is initialized natively. 
-// We just export the instances for use throughout the app here.
+// Using the modular-compatible instance access
 export const fbAuth = auth();
 export const db = firestore();
 export const fbStorage = storage();

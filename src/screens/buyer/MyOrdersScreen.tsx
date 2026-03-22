@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, FlatList, RefreshControl, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, RefreshControl, ActivityIndicator } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useAuthStore } from '../../store/authStore';
-import { db, Collections } from '../../services/firebase';
+import { orderService } from '../../services/orderService';
 import { colors } from '../../constants/colors';
 
 const TABS = ['All', 'Active', 'Completed'];
@@ -40,43 +41,23 @@ const MyOrdersScreen = () => {
   const [loadingInitial, setLoadingInitial] = useState(true);
 
   const fetchOrders = async () => {
-    if (!user?.id) return;
     try {
-      const snapshot = await db.collection(Collections.orders)
-        .where('buyerId', '==', user.id)
-        .get();
-
-      const fetchedOs: Order[] = [];
-      snapshot.forEach(doc => {
-        const data = doc.data();
-        fetchedOs.push({
-          id: doc.id,
-          buyerId: data.buyerId,
-          farmerId: data.farmerId || '',
-          farmerName: data.farmerName || 'Farmer',
-          cropEmoji: data.cropEmoji || '📦',
-          cropName: data.cropName || 'Produce',
-          quantity: data.quantity || '0 kg',
-          totalPrice: data.totalPrice || 0,
-          status: data.status || 'Pending',
-          createdAt: data.createdAt || new Date().toISOString(),
-        });
-      });
-
-      // Dummy state injection for blank databases
-      if (fetchedOs.length === 0) {
-        fetchedOs.push(
-          { id: '1', buyerId: user.id, farmerId: 'f1', farmerName: 'Sunil Silva', cropEmoji: '🍅', cropName: 'Tomato', quantity: '500 kg', totalPrice: 90000, status: 'Pickup today', createdAt: new Date().toISOString() },
-          { id: '2', buyerId: user.id, farmerId: 'f2', farmerName: 'Kamal Perera', cropEmoji: '🍌', cropName: 'Banana', quantity: '100 kg', totalPrice: 12000, status: 'Completed', createdAt: new Date(Date.now() - 86400000).toISOString() },
-          { id: '3', buyerId: user.id, farmerId: 'f3', farmerName: 'Nimali', cropEmoji: '🥕', cropName: 'Carrot', quantity: '200 kg', totalPrice: 50000, status: 'Pending', createdAt: new Date().toISOString() },
-          { id: '4', buyerId: user.id, farmerId: 'f4', farmerName: 'Upali', cropEmoji: '🌾', cropName: 'Rice (Nadu)', quantity: '1000 kg', totalPrice: 210000, status: 'In transit', createdAt: new Date().toISOString() }
-        );
+      const response = await orderService.getMyOrders();
+      if (response.success) {
+        const fetchedOs: Order[] = response.data.map((item: any) => ({
+          id: item.id,
+          buyerId: item.buyerId,
+          farmerId: item.farmerId,
+          farmerName: item.farmerName || 'Farmer',
+          cropEmoji: item.cropEmoji || '📦',
+          cropName: item.cropName,
+          quantity: item.quantity,
+          totalPrice: item.totalPrice,
+          status: item.status,
+          createdAt: item.createdAt,
+        }));
+        setOrders(fetchedOs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
       }
-
-      // Sort consistently by newest first
-      fetchedOs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      
-      setOrders(fetchedOs);
     } catch (error) {
       console.error('Error fetching orders:', error);
     }

@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, FlatList, RefreshControl, ActivityIndicator, Modal, TextInput, Image, KeyboardAvoidingView, Platform, Alert, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, RefreshControl, ActivityIndicator, Modal, TextInput, Image, KeyboardAvoidingView, Platform, Alert, ScrollView } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { launchImageLibrary, Asset } from 'react-native-image-picker';
 import { useAuthStore } from '../../store/authStore';
-import { db, fbStorage, Collections } from '../../services/firebase';
+import { fbStorage } from '../../services/firebase';
+import { productService } from '../../services/productService';
 import { colors } from '../../constants/colors';
 
 const CATEGORIES = ['FERTILIZER', 'SEED', 'PESTICIDE', 'TOOL'];
@@ -48,38 +50,22 @@ const ManageProductsScreen = () => {
   const [isUnitModalVisible, setUnitModalVisible] = useState(false);
 
   const fetchProducts = async () => {
-    if (!user?.id) return;
     try {
-      const snapshot = await db.collection(Collections.shop_products)
-        .where('shopId', '==', user.id)
-        .get();
-
-      const fetched: ShopProduct[] = [];
-      snapshot.forEach(doc => {
-        const data = doc.data();
-        fetched.push({
-          id: doc.id,
-          shopId: data.shopId,
-          name: data.name || '',
-          category: data.category || 'FERTILIZER',
-          price: data.price || 0,
-          unit: data.unit || 'kg',
-          stockQuantity: data.stockQuantity || 0,
-          stockStatus: data.stockStatus || 'OUT_OF_STOCK',
-          imageUrl: data.imageUrl,
-        });
-      });
-
-      // Seeding database locally if blank
-      if (fetched.length === 0) {
-        fetched.push(
-          { id: '1', shopId: user.id, name: 'Urea Fertilizer 50kg', category: 'FERTILIZER', price: 6500, unit: 'packet', stockQuantity: 50, stockStatus: 'IN_STOCK' },
-          { id: '2', shopId: user.id, name: 'Tomato Seeds (Hybrid)', category: 'SEED', price: 350, unit: 'packet', stockQuantity: 5, stockStatus: 'LOW_STOCK' },
-          { id: '3', shopId: user.id, name: 'Water Pump 2HP', category: 'TOOL', price: 15000, unit: 'piece', stockQuantity: 0, stockStatus: 'OUT_OF_STOCK' }
-        );
+      const response = await productService.getShopProducts();
+      if (response.success) {
+        const fetched: ShopProduct[] = response.data.map((item: any) => ({
+          id: item.id,
+          shopId: item.shopId,
+          name: item.name,
+          category: item.category,
+          price: item.price,
+          unit: item.unit,
+          stockQuantity: item.stockQuantity,
+          stockStatus: item.stockStatus,
+          imageUrl: item.imageUrl,
+        }));
+        setProducts(fetched);
       }
-
-      setProducts(fetched);
     } catch (error) {
       console.error('Error fetching products:', error);
     }
@@ -126,16 +112,9 @@ const ManageProductsScreen = () => {
     }
   };
 
-  // Computes active status badges natively 
-  const computeStockStatus = (qty: number) => {
-    if (qty <= 0) return 'OUT_OF_STOCK';
-    if (qty <= 10) return 'LOW_STOCK';
-    return 'IN_STOCK';
-  };
-
   const handleSave = async () => {
     if (!name || !category || !price || !stockQuantity) {
-      Alert.alert('Incomplete Requirements', 'Please fill all required fields including category and price.');
+      Alert.alert('Incomplete Requirements', 'Please fill all required fields.');
       return;
     }
 
@@ -143,7 +122,6 @@ const ManageProductsScreen = () => {
     try {
       let finalImageUrl = existingImageUrl;
 
-      // Handle Firebase image uploading explicitly if touched
       if (image && image.uri && !image.uri.startsWith('http')) {
         const fileName = `shop_products/${user?.id}_${Date.now()}.jpg`;
         const ref = fbStorage.ref(fileName);
@@ -152,37 +130,32 @@ const ManageProductsScreen = () => {
       }
 
       const q = parseInt(stockQuantity, 10);
-      const computedStatus = computeStockStatus(q);
 
       const productData: any = {
-        shopId: user?.id,
-        shopName: user?.name, // Indexed to eliminate heavy subqueries globally
-        district: user?.district,
         name: name.trim(),
         category,
         price: parseFloat(price),
         unit,
         stockQuantity: q,
-        stockStatus: computedStatus,
-        updatedAt: new Date().toISOString(),
+        imageUrl: finalImageUrl || undefined
       };
 
-      if (finalImageUrl) {
-        productData.imageUrl = finalImageUrl;
-      }
-
       if (editingId) {
-        await db.collection(Collections.shop_products).doc(editingId).set(productData, { merge: true });
-        setProducts(prev => prev.map(p => p.id === editingId ? { ...p, ...productData, id: editingId } : p));
+        const response = await productService.updateProduct(editingId, productData);
+        if (response.success) {
+          await fetchProducts();
+        }
       } else {
-        productData.createdAt = new Date().toISOString();
-        const docRef = await db.collection(Collections.shop_products).add(productData);
-        setProducts(prev => [...prev, { id: docRef.id, ...productData }]);
+        const response = await productService.createProduct(productData);
+        if (response.success) {
+          await fetchProducts();
+        }
       }
 
       setIsFormVisible(false);
     } catch (error: any) {
-      Alert.alert('Save Error', error.message || 'Failed to update catalog securely.');
+      console.error('Save Product Error:', error);
+      Alert.alert('Error', error.response?.data?.message || 'Failed to save product.');
     } finally {
       setIsSubmitting(false);
     }

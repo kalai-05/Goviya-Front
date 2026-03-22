@@ -1,17 +1,30 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, FlatList, RefreshControl, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, RefreshControl, ActivityIndicator } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Ionicons';
-import { db, Collections } from '../../services/firebase';
+import { marketService } from '../../services/marketService';
 import { colors } from '../../constants/colors';
 
 interface MarketPrice {
   id: string;
-  crop: string;
-  emoji: string;
+  cropName: string;
+  pricePerKg: number;
+  changePercent: number; 
   category: 'Veg' | 'Fruit' | 'Grain';
-  price: number;
-  trend: number; // e.g. 5 for +5%, -2 for -2%
 }
+
+const CROP_EMOJIS: { [key: string]: string } = {
+  'Tomato': '🍅',
+  'Carrot': '🥕',
+  'Leeks': '🧅',
+  'Cabbage': '🥬',
+  'Potato': '🥔',
+  'Pumpkin': '🎃',
+  'Banana': '🍌',
+  'Papaya': '🥭',
+  'Rice (Nadu)': '🌾',
+  'Rice (Samba)': '🌾',
+};
 
 const CATEGORIES = ['All', 'Veg', 'Fruit', 'Grain'];
 
@@ -23,31 +36,13 @@ const MarketPricesScreen = () => {
 
   const fetchPrices = async () => {
     try {
-      const snapshot = await db.collection(Collections.market_prices).get();
-      const fetchedPrices: MarketPrice[] = [];
-      snapshot.forEach(doc => {
-        const data = doc.data();
-        fetchedPrices.push({
-          id: doc.id,
-          crop: data.crop || 'Unknown',
-          emoji: data.emoji || '🥬',
-          category: data.category || 'Veg',
-          price: data.price || 0,
-          trend: data.trend || 0,
-        });
-      });
-      
-      // Included dummy data for demonstration fallback if backend is empty
-      if (fetchedPrices.length === 0) {
-        fetchedPrices.push(
-          { id: '1', crop: 'Carrot', emoji: '🥕', category: 'Veg', price: 250, trend: 12.5 },
-          { id: '2', crop: 'Banana', emoji: '🍌', category: 'Fruit', price: 120, trend: -3.2 },
-          { id: '3', crop: 'Rice (Nadu)', emoji: '🌾', category: 'Grain', price: 210, trend: 1.5 },
-          { id: '4', crop: 'Tomato', emoji: '🍅', category: 'Veg', price: 300, trend: 24.0 },
-          { id: '5', crop: 'Mango', emoji: '🥭', category: 'Fruit', price: 150, trend: -5.0 }
-        );
+      const response = await marketService.getPrices();
+      if (response.success) {
+        setPrices(response.data.map((item: any) => ({
+          ...item,
+          category: item.cropName?.includes('Rice') ? 'Grain' : 'Veg' // Logic mapping
+        })));
       }
-      setPrices(fetchedPrices);
     } catch (error) {
       console.error('Failed to fetch market prices:', error);
     }
@@ -58,7 +53,7 @@ const MarketPricesScreen = () => {
     await fetchPrices();
     setRefreshing(false);
     setLoading(false);
-  }, []);
+  }, [selectedCategory]);
 
   useEffect(() => {
     loadData();
@@ -71,7 +66,7 @@ const MarketPricesScreen = () => {
 
   const topSpikeItem = useMemo(() => {
     if (prices.length === 0) return null;
-    return prices.reduce((max, item) => (item.trend > max.trend ? item : max), prices[0]);
+    return prices.reduce((max, item) => (item.changePercent > max.changePercent ? item : max), prices[0]);
   }, [prices]);
 
   const renderHeader = () => (
@@ -102,22 +97,22 @@ const MarketPricesScreen = () => {
   );
 
   const renderItem = ({ item }: { item: MarketPrice }) => {
-    const isPositive = item.trend >= 0;
+    const isPositive = item.changePercent >= 0;
     const trendColor = isPositive ? colors.farmer.primary : '#d9534f';
     const trendIcon = isPositive ? 'trending-up' : 'trending-down';
     
     return (
       <View style={styles.priceRow}>
         <View style={styles.cropInfo}>
-          <Text style={styles.emoji}>{item.emoji}</Text>
-          <Text style={styles.cropName}>{item.crop}</Text>
+          <Text style={styles.emoji}>{CROP_EMOJIS[item.cropName] || '🥦'}</Text>
+          <Text style={styles.cropName}>{item.cropName}</Text>
         </View>
         <View style={styles.priceDetails}>
-          <Text style={styles.priceText}>Rs. {item.price}</Text>
+          <Text style={styles.priceText}>Rs. {item.pricePerKg}</Text>
           <View style={[styles.trendBadge, { backgroundColor: isPositive ? colors.farmer.light : '#fdeeea' }]}>
             <Icon name={trendIcon} size={14} color={trendColor} />
             <Text style={[styles.trendText, { color: trendColor }]}>
-              {isPositive ? '+' : ''}{item.trend}%
+              {isPositive ? '+' : ''}{item.changePercent}%
             </Text>
           </View>
         </View>
@@ -126,7 +121,7 @@ const MarketPricesScreen = () => {
   };
 
   const renderFooter = () => {
-    if (!topSpikeItem || topSpikeItem.trend <= 0) return null;
+    if (!topSpikeItem || topSpikeItem.changePercent <= 0) return null;
     return (
       <View style={styles.aiTipCard}>
         <View style={styles.aiTipHeader}>
@@ -134,8 +129,8 @@ const MarketPricesScreen = () => {
           <Text style={styles.aiTipTitle}>AI Market Insight</Text>
         </View>
         <Text style={styles.aiTipBody}>
-          <Text style={{ fontWeight: 'bold' }}>{topSpikeItem.crop}</Text> prices have spiked by 
-          <Text style={{ fontWeight: 'bold', color: colors.farmer.primary }}> {topSpikeItem.trend}% </Text> 
+          <Text style={{ fontWeight: 'bold' }}>{topSpikeItem.cropName}</Text> prices have spiked by 
+          <Text style={{ fontWeight: 'bold', color: colors.farmer.primary }}> {topSpikeItem.changePercent}% </Text> 
           recently. Consider harvesting or listing now to maximize your profit!
         </Text>
       </View>

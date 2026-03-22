@@ -1,12 +1,11 @@
 import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
 import { AuthNavigator } from './AuthNavigator';
 import { FarmerTabs } from './FarmerTabs';
 import { BuyerTabs } from './BuyerTabs';
 import { ShopTabs } from './ShopTabs';
 import { useAuthStore } from '../store/authStore';
 
-export const AppNavigator = () => {
+export default function AppNavigator() {
   const { user, role } = useAuthStore();
 
   const renderNavigator = () => {
@@ -27,9 +26,5 @@ export const AppNavigator = () => {
     }
   };
 
-  return (
-    <NavigationContainer>
-      {renderNavigator()}
-    </NavigationContainer>
-  );
-};
+  return renderNavigator();
+}

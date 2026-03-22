@@ -9,7 +9,7 @@ const Stack = createNativeStackNavigator();
 
 export const AuthNavigator = () => {
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
+    <Stack.Navigator initialRouteName="Splash" screenOptions={{ headerShown: false }}>
       <Stack.Screen name="Splash" component={SplashScreen} />
       <Stack.Screen name="Language" component={LanguageScreen} />
       <Stack.Screen name="OTP" component={OTPScreen} />

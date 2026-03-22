@@ -15,6 +15,7 @@ export const FarmerTabs = () => {
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
+        tabBarActiveBackgroundColor: '#1a7a4a',
         tabBarActiveTintColor: colors.farmer.primary, // #1a7a4a
         tabBarIcon: ({ focused, color, size }) => {
           let iconName = 'help-outline';

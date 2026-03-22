@@ -1,56 +1,89 @@
-import { FirebaseAuthTypes } from '@react-native-firebase/auth';
-import { fbAuth, db, Collections } from './firebase';
+import auth from '@react-native-firebase/auth';
+import api from './api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuthStore } from '../store/authStore';
 
-// We store the confirmation result globally within the service so verifyOTP can access it
-let confirmationResult: FirebaseAuthTypes.ConfirmationResult | null = null;
+let confirmationResult: any = null;
 
-export const sendOTP = async (phoneNumber: string): Promise<void> => {
+export const sendOTP = async (phone: string): Promise<void> => {
   try {
-    confirmationResult = await fbAuth.signInWithPhoneNumber(phoneNumber);
-  } catch (error) {
+    confirmationResult = await auth().signInWithPhoneNumber(phone);
+  } catch (error: any) {
     console.error('Error in sendOTP:', error);
-    throw error;
+    throw new Error(error.message);
   }
 };
 
-export const verifyOTP = async (otp: string): Promise<void> => {
+export const verifyOTP = async (phone: string, otp: string): Promise<void> => {
   try {
     if (!confirmationResult) {
       throw new Error('No OTP request found. Please request an OTP first.');
     }
+    
+    // 1. Verify with Firebase natively 
     await confirmationResult.confirm(otp);
-  } catch (error) {
+
+    // 2. Get the Firebase ID Token from the newly authenticated user 
+    const currentUser = auth().currentUser;
+    if (!currentUser) throw new Error('Firebase session lost');
+    
+    const idToken = await currentUser.getIdToken();
+
+    // 3. Handshake with local Backend to get a project-specific JWT 
+    const response = await api.post('/auth/firebase-login', { idToken });
+    const { success, data, message } = response.data;
+    
+    if (!success) {
+      throw new Error(message || 'Failed to verify with backend');
+    }
+
+    const { token, user } = data;
+    
+    // 4. Securely cache local backend credentials 
+    await AsyncStorage.setItem('jwt_token', token);
+    useAuthStore.getState().setUser(user);
+    
+  } catch (error: any) {
     console.error('Error in verifyOTP:', error);
-    throw error;
+    throw new Error(error.response?.data?.message || error.message);
   }
 };
 
 export const saveUserProfile = async (data: { name: string; role: string; district: string; language: string }): Promise<void> => {
   try {
-    const currentUser = fbAuth.currentUser;
-    if (!currentUser) {
-      throw new Error('User is not authenticated');
+    const response = await api.post('/auth/register', data);
+    const { success, data: user, message } = response.data;
+    
+    if (!success) {
+      throw new Error(message || 'Failed to update profile');
     }
 
-    const userData = {
-      id: currentUser.uid,
-      phone: currentUser.phoneNumber || '',
-      ...data,
-      updatedAt: new Date().toISOString(),
-    };
-
-    // Save/update in Firestore
-    await db.collection(Collections.users).doc(currentUser.uid).set(userData, { merge: true });
-
-    // Assuming valid values for Zustand typing
-    useAuthStore.getState().setUser(userData as any);
-  } catch (error) {
+    useAuthStore.getState().setUser(user);
+    
+  } catch (error: any) {
     console.error('Error in saveUserProfile:', error);
-    throw error;
+    throw new Error(error.response?.data?.message || error.message);
   }
 };
 
-export const getCurrentUser = (): FirebaseAuthTypes.User | null => {
-  return fbAuth.currentUser;
+export const fetchCurrentUser = async (): Promise<void> => {
+  try {
+    const response = await api.get('/auth/me');
+    if (response.data.success) {
+      useAuthStore.getState().setUser(response.data.data);
+    }
+  } catch (error) {
+    console.error('Error fetching current user:', error);
+    useAuthStore.getState().setUser(null);
+  }
+};
+
+export const logout = async (): Promise<void> => {
+  try {
+    await auth().signOut();
+    await AsyncStorage.removeItem('jwt_token');
+    useAuthStore.getState().logout();
+  } catch (error) {
+    console.error('Error during logout:', error);
+  }
 };

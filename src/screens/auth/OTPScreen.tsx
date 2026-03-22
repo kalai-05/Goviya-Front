@@ -44,8 +44,9 @@ const OTPScreen = () => {
     }
 
     setIsLoading(true);
+    const formattedNumber = `+94${phoneNumber.replace(/^0+/, '')}`; 
     try {
-      await verifyOTP(otpCode);
+      await verifyOTP(formattedNumber, otpCode);
       navigation.navigate('RoleSelect');
     } catch (error: any) {
       Alert.alert('Verification Failed', error.message || 'Invalid OTP code');

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "283037064466",
+    "project_id": "goviya-ad449",
+    "storage_bucket": "goviya-ad449.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:283037064466:android:cc29368dffdc12a20f67cb",
+        "android_client_info": {
+          "package_name": "com.goviya"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDEHOtnyq7i5FNe5SpgLk2ehwt9nO7kPFE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
